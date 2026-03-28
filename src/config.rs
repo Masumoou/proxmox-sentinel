@@ -21,6 +21,10 @@ pub struct Config {
     pub collection: CollectionConfig,
     #[serde(default)]
     pub haproxy: Option<HaproxyConfig>,
+    #[serde(default)]
+    pub storage: StorageConfig,
+    #[serde(default)]
+    pub cluster: ClusterConfig,
 }
 
 impl Config {
@@ -58,6 +62,7 @@ pub struct MetricsConfig {
     pub listen_addr: String,
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
+    pub auth: Option<String>,
 }
 
 fn default_listen_addr() -> String {
@@ -219,3 +224,79 @@ fn default_haproxy_url() -> String {
 fn default_haproxy_interval() -> u64 {
     10
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Storage config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StorageConfig {
+    #[serde(default = "default_db_path")]
+    pub db_path: String,
+    #[serde(default = "default_metric_retention_days")]
+    pub metric_retention_days: u32,
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u32,
+    #[serde(default = "default_alert_retention_days")]
+    pub alert_retention_days: u32,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            db_path: default_db_path(),
+            metric_retention_days: default_metric_retention_days(),
+            log_retention_days: default_log_retention_days(),
+            alert_retention_days: default_alert_retention_days(),
+        }
+    }
+}
+
+fn default_db_path() -> String {
+    "/var/lib/proxmox-sentinel/sentinel.db".to_string()
+}
+
+fn default_metric_retention_days() -> u32 {
+    7 // 1 week of high-res metrics
+}
+
+fn default_log_retention_days() -> u32 {
+    14 // 2 weeks of logs
+}
+
+fn default_alert_retention_days() -> u32 {
+    30 // 1 month of alerts
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Cluster config (Hub-and-spoke multi-node)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClusterConfig {
+    #[serde(default = "default_cluster_mode")]
+    pub mode: String, // "standalone", "agent", "server"
+    #[serde(default = "default_server_url")]
+    pub server_url: String, // http://10.10.x.x:9101 (used by agent)
+    #[serde(default)]
+    pub shared_secret: String, // secret to authenticate agents -> server
+}
+
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_cluster_mode(),
+            server_url: default_server_url(),
+            shared_secret: "".to_string(),
+        }
+    }
+}
+
+fn default_cluster_mode() -> String {
+    "standalone".to_string()
+}
+
+fn default_server_url() -> String {
+    "http://127.0.0.1:9101".to_string()
+}
+

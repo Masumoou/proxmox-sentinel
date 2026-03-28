@@ -11,6 +11,7 @@ insecure_tls      = true        # Proxmox uses self-signed cert by default
 [metrics]
 listen_addr = "0.0.0.0"
 listen_port = 9101              # Prometheus will scrape :9101/metrics
+auth        = "admin:secret"    # Basic Auth for dashboard + metrics (optional)
 
 [logs]
 tail_lines  = 100               # How many lines to read on initial startup
@@ -94,3 +95,15 @@ stats_url     = "http://10.10.207.1:8404/stats;csv"  # HAProxy stats CSV endpoin
 # auth        = "admin:password"                   # Uncomment if stats page requires auth
 interval_secs = 10                                 # Poll interval
 
+# ── SQLite Database Storage ──────────────────────────────────────────────────
+[storage]
+db_path               = "/var/lib/proxmox-sentinel/sentinel.db"
+metric_retention_days = 7
+log_retention_days    = 14
+alert_retention_days  = 30
+
+# ── Multi-Node Cluster (Hub & Spoke) ─────────────────────────────────────────
+[cluster]
+mode          = "standalone"   # "standalone", "agent", or "server"
+server_url    = "http://127.0.0.1:9101" # Only used if mode="agent"
+shared_secret = "change_me"    # Pre-shared key for authenticating agents

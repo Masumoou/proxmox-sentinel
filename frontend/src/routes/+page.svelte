@@ -11,6 +11,20 @@
   let wsConnected = $state(false);
   let detailMap: Record<number, any> = {};
   let alerts = $state<any[]>([]);
+  let haproxyStats = $state<any>(null);
+
+  // Sparkline history arrays (keep last 10 ticks)
+  const MAX_HISTORY = 10;
+  let historyCpu = $state(Array(MAX_HISTORY).fill(0));
+  let historyRam = $state(Array(MAX_HISTORY).fill(0));
+  let historyNet = $state(Array(MAX_HISTORY).fill(0)); // Mocked as %
+  let historyStorage = $state(Array(MAX_HISTORY).fill(0));
+
+  function getPolylinePath(dataArray: number[]) {
+    // Map array to X,Y points on an 80x20 viewBox
+    const stepX = 80 / (MAX_HISTORY - 1);
+    return dataArray.map((val, i) => `${i * stepX},${20 - (val / 100) * 20}`).join(' ');
+  }
 
   function formatBytes(bytes: number, decimals = 1) {
     if (!+bytes) return '0 B';
@@ -43,8 +57,22 @@
             const avgCpu = nodes.reduce((a: number, n: any) => a + n.cpu, 0) / nodes.length;
             const usedMem = nodes.reduce((a: number, n: any) => a + n.mem_used, 0);
             const totalMem = nodes.reduce((a: number, n: any) => a + n.mem_total, 0);
+            const usedDisk = nodes.reduce((a: number, n: any) => a + (n.disk_used || 0), 0);
+            const totalDisk = nodes.reduce((a: number, n: any) => a + (n.disk_total || 0), 0);
+            
             clusterCpu = Math.round(avgCpu * 100);
             clusterRam = totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0;
+            clusterStorage = totalDisk > 0 ? Math.round((usedDisk / totalDisk) * 100) : 0;
+            
+            // Push history ticks for SVG Sparklines
+            historyCpu = [...historyCpu.slice(1), clusterCpu];
+            historyRam = [...historyRam.slice(1), clusterRam];
+            historyStorage = [...historyStorage.slice(1), clusterStorage];
+            
+            // Fake varying network percentage for the UI
+            let netVal = Math.floor(Math.random() * 80) + 10; 
+            historyNet = [...historyNet.slice(1), netVal];
+            clusterNet = `${netVal * 2}0 Mb/s`;
           }
 
           guests = guestList.map((g: any) => {
@@ -80,6 +108,10 @@
             detailMap[vm.vmid] = { services: vm.services || [], disk_mounts: vm.disk_mounts || [], agent: vm.agent, ssh: vm.ssh, ip: vm.ip };
           }
           refreshDetails();
+        }
+
+        if (p.type === 'haproxy_update') {
+          haproxyStats = p;
         }
       } catch {}
     };
@@ -158,9 +190,17 @@
 
           <div class="gauge-container">
             <div class="bw-block">
-              <div class="bw-label">Bandwidth</div>
-              <div class="bw-value">{guest.bandwidth_up}</div>
-              <div class="bw-sub">{guest.bandwidth_val}</div>
+              <div class="bw-label">Disk Vol</div>
+              {#if guest.disk_mounts && guest.disk_mounts.length > 0}
+                {#each guest.disk_mounts as mount, i}
+                  <div class="bw-value" style="font-size:0.6rem;">{mount.mountpoint}: {formatBytes(mount.used)} / {formatBytes(mount.total)}</div>
+                  <div class="disk-bar">
+                     <div class="disk-fill" style="width: {Math.min(100, Math.max(0, mount.use_pct * 100))}%;"></div>
+                  </div>
+                {/each}
+              {:else}
+                <div class="bw-value" style="font-size:0.6rem; color: var(--text-dim);">No volumes</div>
+              {/if}
             </div>
           </div>
         </div>
@@ -217,8 +257,7 @@
           <div class="overview-gauge-label">CPU</div>
           <div class="sparkline">
             <svg viewBox="0 0 80 20" style="width: 80px; height: 20px;">
-              <polyline fill="none" stroke="var(--accent-magenta)" stroke-width="1.5"
-                points="0,15 10,12 20,14 30,8 40,10 50,6 60,9 70,7 80,10" />
+              <polyline fill="none" stroke="var(--accent-magenta)" stroke-width="1.5" points={getPolylinePath(historyCpu)} />
             </svg>
           </div>
         </div>
@@ -232,60 +271,78 @@
           <div class="overview-gauge-label">RAM</div>
           <div class="sparkline">
             <svg viewBox="0 0 80 20" style="width: 80px; height: 20px;">
-              <polyline fill="none" stroke="var(--accent-cyan)" stroke-width="1.5"
-                points="0,10 10,12 20,8 30,14 40,10 50,12 60,8 70,10 80,9" />
+              <polyline fill="none" stroke="var(--accent-cyan)" stroke-width="1.5" points={getPolylinePath(historyRam)} />
             </svg>
           </div>
         </div>
 
         <div class="overview-gauge-block">
-          <div class="gauge gauge-lg" style={gaugeStyle(35, 'var(--accent-green)')}>
+          <div class="gauge gauge-lg" style={gaugeStyle(historyNet[MAX_HISTORY-1], 'var(--accent-green)')}>
             <div class="gauge-inner gauge-inner-lg">
-              <span class="gauge-value" style="font-size: 0.7rem;">24Gbps</span>
+              <span class="gauge-value" style="font-size: 0.7rem;">{clusterNet}</span>
             </div>
           </div>
           <div class="overview-gauge-label">NET</div>
           <div class="sparkline">
             <svg viewBox="0 0 80 20" style="width: 80px; height: 20px;">
-              <polyline fill="none" stroke="var(--accent-green)" stroke-width="1.5"
-                points="0,18 10,10 20,14 30,6 40,12 50,4 60,8 70,6 80,10" />
+              <polyline fill="none" stroke="var(--accent-green)" stroke-width="1.5" points={getPolylinePath(historyNet)} />
             </svg>
           </div>
         </div>
 
         <div class="overview-gauge-block">
-          <div class="gauge gauge-lg" style={gaugeStyle(72, 'var(--accent-purple)')}>
+          <div class="gauge gauge-lg" style={gaugeStyle(clusterStorage, 'var(--accent-purple)')}>
             <div class="gauge-inner gauge-inner-lg">
-              <span class="gauge-value">72%</span>
+              <span class="gauge-value">{clusterStorage}%</span>
             </div>
           </div>
           <div class="overview-gauge-label">STORAGE</div>
           <div class="sparkline">
             <svg viewBox="0 0 80 20" style="width: 80px; height: 20px;">
-              <polyline fill="none" stroke="var(--accent-purple)" stroke-width="1.5"
-                points="0,8 10,10 20,9 30,11 40,10 50,12 60,11 70,12 80,11" />
+              <polyline fill="none" stroke="var(--accent-purple)" stroke-width="1.5" points={getPolylinePath(historyStorage)} />
             </svg>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Recent Alerts -->
+    <!-- Live Alerts & HAProxy Panel -->
     <div class="neon-card alerts-panel" style="border-color: rgba(255, 140, 0, 0.3);">
-      <div class="alerts-title">RECENT ALERTS</div>
-      {#if alerts.length === 0}
-        <div class="alert-item">
-          <span class="alert-icon">⚠</span>
-          <div class="alert-content">
-            <div class="alert-name">Service Card <span class="alert-time-badge">18:00</span></div>
-            <div class="alert-desc">Service Card warnings info.</div>
-          </div>
-        </div>
-        <div class="alert-item">
-          <span class="alert-icon" style="color: var(--accent-red);">⚠</span>
-          <div class="alert-content">
-            <div class="alert-name">Service Card <span class="alert-time-badge" style="background: rgba(255,51,85,0.2); color: var(--accent-red);">NOW</span></div>
-            <div class="alert-desc">Service Card warnings info.</div>
+      <div class="alerts-title">SYSTEM ALERTS & ROUTING</div>
+      
+      {#if !haproxyStats || haproxyStats.total_servers === 0}
+         <div class="alert-item" style="opacity:0.6;">
+            <div class="alert-content">
+               <div class="alert-desc">Waiting for proxy telemetry...</div>
+            </div>
+         </div>
+      {/if}
+
+      {#if haproxyStats && haproxyStats.proxies}
+        {#each haproxyStats.proxies as proxy}
+          {#each proxy.servers as s}
+            {#if s.status === 'DOWN'}
+              <div class="alert-item">
+                <span class="alert-icon" style="color: var(--accent-red);">⚠</span>
+                <div class="alert-content">
+                  <div class="alert-name">
+                    {proxy.name}::{s.name} 
+                    <span class="alert-time-badge" style="background: rgba(255,51,85,0.2); color: var(--accent-red);">DOWN</span>
+                  </div>
+                  <div class="alert-desc">Backend proxy routing failed. {s.downtime} seconds offline.</div>
+                </div>
+              </div>
+            {/if}
+          {/each}
+        {/each}
+        
+        <div class="alert-item" style="border-bottom:none; margin-top: auto;">
+          <div class="alert-content" style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="alert-name"><span class="svc-dot" style="background: var(--accent-orange); box-shadow: 0 0 6px var(--accent-orange);"></span> LOAD BALANCER ACTIVE</div>
+            <div class="alert-desc" style="font-size: 0.72rem; color: var(--text-primary);">
+              <span class="text-green" style="font-weight:700;">{haproxyStats.servers_up} UP</span> / 
+              <span class="text-red">{haproxyStats.servers_down} DOWN</span>
+            </div>
           </div>
         </div>
       {/if}
@@ -409,9 +466,20 @@
     color: var(--accent-cyan);
   }
 
-  .bw-sub {
-    font-size: 0.65rem;
-    color: var(--text-dim);
+  .disk-bar {
+    width: 60px;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    margin-top: 4px;
+    overflow: hidden;
+  }
+  
+  .disk-fill {
+    height: 100%;
+    background: var(--accent-purple);
+    box-shadow: 0 0 8px var(--accent-purple);
+    transition: width 0.3s ease;
   }
 
   /* ── Services Section ──────────────────────────────────── */

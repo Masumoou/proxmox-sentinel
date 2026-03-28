@@ -4,12 +4,14 @@
 // Also exposes a JSON API at GET /api/status for dashboards.
 
 use axum::{
-    extract::{State, ws::{WebSocket, WebSocketUpgrade, Message}},
-    http::{header, StatusCode, Method},
+    extract::{State, ws::{WebSocket, WebSocketUpgrade, Message}, Request},
+    http::{header, StatusCode, Method, HeaderValue},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
+use base64::prelude::*;
 use rust_embed::RustEmbed;
 use mime_guess::from_path;
 use prometheus::{
@@ -193,6 +195,30 @@ static LXC_PID_COUNT: Lazy<GaugeVec> = Lazy::new(|| {
     ).unwrap()
 });
 
+static LXC_SWAP_CURRENT: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_lxc_cgroup_swap_current_bytes",
+        "Current swap usage from cgroup",
+        &["vmid", "name"]
+    ).unwrap()
+});
+
+static NODE_SWAP_USED: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_node_swap_used_bytes",
+        "Node swap used bytes",
+        &["node"]
+    ).unwrap()
+});
+
+static NODE_SWAP_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_node_swap_total_bytes",
+        "Node swap total bytes",
+        &["node"]
+    ).unwrap()
+});
+
 // Storage
 static STORAGE_USED: Lazy<GaugeVec> = Lazy::new(|| {
     register_gauge_vec!(
@@ -285,6 +311,8 @@ pub fn update_node(n: &NodeStatus) {
     NODE_CPU_USAGE.with_label_values(&[nd]).set(n.cpu_usage);
     NODE_MEM_USED.with_label_values(&[nd]).set(n.mem_used as f64);
     NODE_MEM_TOTAL.with_label_values(&[nd]).set(n.mem_total as f64);
+    NODE_SWAP_USED.with_label_values(&[nd]).set(n.swap_used as f64);
+    NODE_SWAP_TOTAL.with_label_values(&[nd]).set(n.swap_total as f64);
     NODE_DISK_USED.with_label_values(&[nd]).set(n.disk_used as f64);
     NODE_DISK_TOTAL.with_label_values(&[nd]).set(n.disk_total as f64);
     NODE_LOAD_AVG.with_label_values(&[nd, "1"]).set(n.load_avg1);
@@ -322,6 +350,7 @@ pub fn update_lxc_detail(s: &LxcDetailedStats) {
     LXC_MEM_ANON.with_label_values(&[&vmid, name]).set(cg.mem_anon as f64);
     LXC_CPU_THROTTLED.with_label_values(&[&vmid, name]).set(cg.cpu_nr_throttled as f64);
     LXC_PID_COUNT.with_label_values(&[&vmid, name]).set(cg.pid_current as f64);
+    LXC_SWAP_CURRENT.with_label_values(&[&vmid, name]).set(cg.mem_swap_current as f64);
 }
 
 pub fn update_storage(s: &StorageStatus) {
@@ -358,31 +387,43 @@ pub fn update_haproxy(stats: &crate::collectors::haproxy::HaproxyStats) {
 pub struct MetricsServer {
     pub addr: String,
     pub tx: broadcast::Sender<String>,
+    pub hub_state: Option<crate::cluster::HubState>,
+    pub auth: Option<String>,
 }
 
 #[derive(Clone)]
 struct AppState {
     tx: broadcast::Sender<String>,
+    expected_auth: Option<String>, // "Basic <base64>"
 }
 
 impl MetricsServer {
-    pub fn new(addr: &str, port: u16, tx: broadcast::Sender<String>) -> Self {
+    pub fn new(addr: &str, port: u16, tx: broadcast::Sender<String>, hub_state: Option<crate::cluster::HubState>, auth: Option<String>) -> Self {
         Self {
             addr: format!("{}:{}", addr, port),
             tx,
+            hub_state,
+            auth,
         }
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let state = AppState { tx: self.tx };
+        let expected_auth = self.auth.map(|a| format!("Basic {}", BASE64_STANDARD.encode(a)));
+        let state = AppState { tx: self.tx, expected_auth };
 
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/api/status", get(status_handler))
             .route("/ws", get(ws_handler))
             .fallback(static_handler)
+            .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
             .with_state(state);
+
+        if let Some(hub_state) = self.hub_state {
+            app = app.merge(crate::cluster::hub_router(hub_state));
+            info!("Hub Ingest API → http://{}/api/v1/ingest", self.addr);
+        }
 
         info!("Prometheus metrics → http://{}/metrics", self.addr);
 
@@ -390,6 +431,27 @@ impl MetricsServer {
         axum::serve(listener, app).await?;
         Ok(())
     }
+}
+
+async fn auth_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, Response> {
+    if let Some(ref expected) = state.expected_auth {
+        let auth_header = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).unwrap_or("");
+        
+        // Use timing-safe compare in a real prod system, but this is fine for basic dashboard
+        if auth_header != expected {
+            let mut res = (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+            res.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static("Basic realm=\"Proxmox Sentinel\""),
+            );
+            return Err(res);
+        }
+    }
+    Ok(next.run(req).await)
 }
 
 async fn metrics_handler() -> impl IntoResponse {

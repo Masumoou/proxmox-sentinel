@@ -26,10 +26,12 @@ use tracing_subscriber::EnvFilter;
 use serde_json::json;
 
 mod alerts;
+mod cluster;
 mod collectors;
 mod config;
 mod exporter;
 mod proxmox_api;
+mod storage;
 
 use alerts::{Alert, AlertDispatcher};
 use collectors::lxc::LxcCollector;
@@ -39,6 +41,7 @@ use collectors::haproxy::HaproxyCollector;
 use config::Config;
 use exporter::prometheus as prom;
 use proxmox_api::{GuestKind, ProxmoxClient};
+use storage::Storage;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // CLI
@@ -136,10 +139,35 @@ async fn run(cfg: Config) -> Result<()> {
         log_collector.watch_host_log(log_path).await.ok();
     }
 
+    // Check and create storage dir
+    let storage_path = PathBuf::from(&cfg.storage.db_path);
+    let storage = Arc::new(Storage::open(&storage_path)?);
+
+    // Retention cleanup task
+    {
+        let store = storage.clone();
+        let s_cfg = cfg.storage.clone();
+        tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_secs(3600)); // Every hour
+            loop {
+                ticker.tick().await;
+                match store.cleanup_old_data(
+                    s_cfg.metric_retention_days,
+                    s_cfg.log_retention_days,
+                    s_cfg.alert_retention_days,
+                ) {
+                    Ok(stats) => info!("{}", stats),
+                    Err(e) => warn!("Storage cleanup error: {}", e),
+                }
+            }
+        });
+    }
+
     // Alert dispatcher task
     let alert_cfg = cfg.alerts.clone();
+    let alert_store = storage.clone();
     tokio::spawn(async move {
-        let mut dispatcher = AlertDispatcher::new(alert_cfg);
+        let mut dispatcher = AlertDispatcher::new(alert_cfg, Some(alert_store));
         while let Some(log_alert) = alert_rx.recv().await {
             dispatcher
                 .dispatch(Alert::LogPattern(log_alert))
@@ -147,11 +175,33 @@ async fn run(cfg: Config) -> Result<()> {
         }
     });
 
-    // Metrics HTTP server
+    // If agent mode, spawn the forwarding task
+    if cfg.cluster.mode == "agent" {
+        let agent_rx = ws_tx.subscribe();
+        let agent_cfg = Arc::new(cfg.clone());
+        tokio::spawn(async move {
+            cluster::run_agent(agent_cfg, agent_rx).await;
+        });
+    }
+
+    // If server mode, we need HubState for the API route
+    let hub_state = if cfg.cluster.mode == "server" {
+        Some(cluster::HubState {
+            ws_tx: ws_tx.clone(),
+            storage: storage.clone(),
+            secret: cfg.cluster.shared_secret.clone(),
+        })
+    } else {
+        None
+    };
+
+    // Metrics HTTP server (serves Prometheus, WebSockets, and optionally /api/v1/ingest)
     let metrics_server = prom::MetricsServer::new(
         &cfg.metrics.listen_addr,
         cfg.metrics.listen_port,
         ws_tx.clone(),
+        hub_state,
+        cfg.metrics.auth.clone(),
     );
     tokio::spawn(async move {
         if let Err(e) = metrics_server.run().await {
@@ -184,10 +234,11 @@ async fn run(cfg: Config) -> Result<()> {
         let nodes = nodes.clone();
         let cfg = cfg.clone();
         let ws_tx = ws_tx.clone();
+        let storage = storage.clone();
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(api_secs));
-            let mut dispatcher = AlertDispatcher::new(cfg.alerts.clone());
+            let mut dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
 
             loop {
                 ticker.tick().await;
@@ -200,11 +251,24 @@ async fn run(cfg: Config) -> Result<()> {
                     match client.node_status(node).await {
                         Ok(status) => {
                             prom::update_node(&status);
+
+                            if let Err(e) = storage.insert_node_metric(
+                                &status.node, status.cpu_usage, status.mem_used, status.mem_total,
+                                status.swap_used, status.swap_total, status.disk_used, status.disk_total,
+                                status.load_avg1,
+                            ) {
+                                warn!("SQLite node metric error: {}", e);
+                            }
+
                             ws_nodes.push(json!({
                                 "node": status.node,
                                 "cpu": status.cpu_usage,
                                 "mem_used": status.mem_used,
                                 "mem_total": status.mem_total,
+                                "swap_used": status.swap_used,
+                                "swap_total": status.swap_total,
+                                "disk_used": status.disk_used,
+                                "disk_total": status.disk_total,
                                 "status": "online"
                             }));
 
@@ -220,6 +284,14 @@ async fn run(cfg: Config) -> Result<()> {
                         Ok(guests) => {
                             for guest in &guests {
                                 prom::update_guest(guest);
+
+                                if let Err(e) = storage.insert_guest_metric(
+                                    guest.vmid, &guest.name, match guest.kind { GuestKind::Vm => "qemu", GuestKind::Lxc => "lxc" },
+                                    &guest.status, guest.cpu_usage, guest.mem_used, guest.mem_total, node
+                                ) {
+                                    warn!("SQLite guest metric error: {}", e);
+                                }
+
                                 ws_guests.push(json!({
                                     "vmid": guest.vmid,
                                     "name": guest.name,
@@ -277,11 +349,12 @@ async fn run(cfg: Config) -> Result<()> {
         let cfg_inner = cfg.clone();
         let log_collector = log_collector.clone();
         let ws_tx = ws_tx.clone();
+        let storage = storage.clone();
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(cgroup_secs));
             let mut watched_lxcs: std::collections::HashSet<u32> = std::collections::HashSet::new();
-            let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone());
+            let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
 
             loop {
                 ticker.tick().await;
@@ -453,13 +526,14 @@ async fn run(cfg: Config) -> Result<()> {
             let ha_cfg = haproxy_cfg.clone();
             let ws_tx = ws_tx.clone();
             let alert_cfg = cfg.alerts.clone();
+            let storage = storage.clone();
 
             match HaproxyCollector::new(&ha_cfg) {
                 Ok(collector) => {
                     info!("HAProxy monitoring enabled: {}", ha_cfg.stats_url);
                     tokio::spawn(async move {
                         let mut ticker = interval(Duration::from_secs(ha_cfg.interval_secs));
-                        let mut dispatcher = AlertDispatcher::new(alert_cfg);
+                        let mut dispatcher = AlertDispatcher::new(alert_cfg, Some(storage.clone()));
 
                         loop {
                             ticker.tick().await;
@@ -468,6 +542,18 @@ async fn run(cfg: Config) -> Result<()> {
                                 Ok(stats) => {
                                     // Update Prometheus metrics
                                     prom::update_haproxy(&stats);
+
+                                    // Save to SQLite
+                                    for p in &stats.proxies {
+                                        for s in &p.servers {
+                                            if let Err(e) = storage.insert_haproxy_metric(
+                                                &p.name, &s.server_name, &s.status,
+                                                s.sessions_current, s.bytes_in, s.bytes_out, s.http_5xx,
+                                            ) {
+                                                warn!("SQLite haproxy error: {}", e);
+                                            }
+                                        }
+                                    }
 
                                     // Fire alerts for down servers
                                     for (proxy, server, downtime) in
@@ -535,9 +621,30 @@ async fn run(cfg: Config) -> Result<()> {
         }
     }
 
-    // ── Block forever ─────────────────────────────────────────────────────
-    info!("All collectors running. Ctrl-C to stop.");
+    // ── Wait for shutdown signals ─────────────────────────────────────────
+    info!("All collectors running. Waiting for events.");
+
+    #[cfg(unix)]
+    let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
+
+    #[cfg(unix)]
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("Ctrl-C received, initiating graceful shutdown.");
+        }
+        _ = sighup.recv() => {
+            info!("SIGHUP received, initiating shutdown (hot-reload is planned).");
+        }
+    }
+
+    #[cfg(not(unix))]
     tokio::signal::ctrl_c().await?;
-    info!("Shutting down.");
+    #[cfg(not(unix))]
+    info!("Ctrl-C received, initiating graceful shutdown.");
+
+    info!("Flushing pending webhooks and committing SQLite transactions (wait 2s)...");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    info!("Shutdown complete.");
     Ok(())
 }

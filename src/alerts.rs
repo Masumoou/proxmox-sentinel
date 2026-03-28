@@ -17,6 +17,8 @@ use tracing::{error, info, warn};
 use crate::collectors::logs::LogAlert;
 use crate::config::{AlertConfig, AlertSeverity};
 use crate::proxmox_api::{GuestStatus, NodeStatus};
+use crate::storage::Storage;
+use std::sync::Arc;
 
 const SILENCE_WINDOW: Duration = Duration::from_secs(300); // 5 min dedup
 
@@ -129,10 +131,11 @@ pub struct AlertDispatcher {
     cfg: AlertConfig,
     http: Option<Client>,
     silence_map: HashMap<String, Instant>,
+    storage: Option<Arc<Storage>>,
 }
 
 impl AlertDispatcher {
-    pub fn new(cfg: AlertConfig) -> Self {
+    pub fn new(cfg: AlertConfig, storage: Option<Arc<Storage>>) -> Self {
         let http = if cfg.enabled {
             cfg.webhook_url.as_ref().map(|_| {
                 Client::builder()
@@ -147,6 +150,7 @@ impl AlertDispatcher {
             cfg,
             http,
             silence_map: HashMap::new(),
+            storage,
         }
     }
 
@@ -168,6 +172,13 @@ impl AlertDispatcher {
             "critical" => error!("ALERT [critical] {summary}"),
             "warning" => warn!("ALERT [warning] {summary}"),
             _ => info!("ALERT [info] {summary}"),
+        }
+
+        // Save to SQLite
+        if let Some(ref storage) = self.storage {
+            if let Err(e) = storage.insert_alert(&key, severity, &summary) {
+                warn!("Failed to save alert to history: {}", e);
+            }
         }
 
         // Webhook dispatch

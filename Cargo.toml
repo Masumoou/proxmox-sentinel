@@ -59,6 +59,10 @@ tower = "0.4"
 rust-embed = "8"
 mime_guess = "2"
 
+# Persistent storage (embedded SQLite, zero external deps)
+rusqlite = { version = "0.31", features = ["bundled"] }
+base64 = "0.22"
+
 [profile.release]
 opt-level = 3
 lto = true

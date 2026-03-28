@@ -32,6 +32,8 @@ pub struct NodeStatus {
     pub cpu_count: u32,
     pub mem_used: u64,           // bytes
     pub mem_total: u64,          // bytes
+    pub swap_used: u64,          // bytes
+    pub swap_total: u64,         // bytes
     pub disk_used: u64,          // bytes (root fs)
     pub disk_total: u64,         // bytes
     pub load_avg1: f64,
@@ -113,6 +115,7 @@ struct RawNodeStatus {
     #[serde(rename = "cpuinfo")]
     cpu_info: Option<RawCpuInfo>,
     memory: RawMemory,
+    swap: Option<RawSwap>,
     #[serde(rename = "rootfs")]
     rootfs: Option<RawDisk>,
     loadavg: Option<Vec<serde_json::Value>>,
@@ -138,6 +141,12 @@ struct RawMemory {
 struct RawDisk {
     used: u64,
     total: u64,
+}
+
+#[derive(Deserialize, Debug)]
+struct RawSwap {
+    used: Option<u64>,
+    total: Option<u64>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -248,13 +257,15 @@ impl ProxmoxClient {
             cpu_count: raw.cpu_info.map(|c| c.cpus).unwrap_or(1),
             mem_used: raw.memory.used,
             mem_total: raw.memory.total,
+            swap_used: raw.swap.as_ref().and_then(|s| s.used).unwrap_or(0),
+            swap_total: raw.swap.as_ref().and_then(|s| s.total).unwrap_or(0),
             disk_used: raw.rootfs.as_ref().map(|d| d.used).unwrap_or(0),
             disk_total: raw.rootfs.as_ref().map(|d| d.total).unwrap_or(0),
             load_avg1: load.get(0).map(parse_load).unwrap_or(0.0),
             load_avg5: load.get(1).map(parse_load).unwrap_or(0.0),
             load_avg15: load.get(2).map(parse_load).unwrap_or(0.0),
             uptime: raw.uptime,
-            kernel_version: String::new(), // populated from uname separately
+            kernel_version: String::new(),
             pve_version: raw.pve_version.unwrap_or_default(),
         })
     }
