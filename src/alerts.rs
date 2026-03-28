@@ -96,15 +96,7 @@ impl Alert {
     }
 }
 
-impl AlertSeverity {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AlertSeverity::Critical => "critical",
-            AlertSeverity::Warning => "warning",
-            AlertSeverity::Info => "info",
-        }
-    }
-}
+
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Webhook payload (Alertmanager-compatible)

@@ -26,15 +26,9 @@ use tracing_subscriber::EnvFilter;
 use serde_json::json;
 
 mod alerts;
-mod collectors {
-    pub mod lxc;
-    pub mod logs;
-    pub mod vm;
-}
+mod collectors;
 mod config;
-mod exporter {
-    pub mod prometheus;
-}
+mod exporter;
 mod proxmox_api;
 
 use alerts::{Alert, AlertDispatcher};
