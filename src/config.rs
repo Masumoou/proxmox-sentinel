@@ -25,6 +25,8 @@ pub struct Config {
     pub storage: StorageConfig,
     #[serde(default)]
     pub cluster: ClusterConfig,
+    #[serde(default)]
+    pub services: ServicesConfig,
 }
 
 impl Config {
@@ -298,5 +300,36 @@ fn default_cluster_mode() -> String {
 
 fn default_server_url() -> String {
     "http://127.0.0.1:9101".to_string()
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Services (Guest internals) config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServicesConfig {
+    #[serde(default)]
+    pub lxc: Vec<LxcServiceChecks>,
+    #[serde(default)]
+    pub vm: Vec<VmServiceChecks>,
+}
+
+impl Default for ServicesConfig {
+    fn default() -> Self {
+        Self { lxc: vec![], vm: vec![] }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LxcServiceChecks {
+    pub vmid: u32,
+    pub checks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VmServiceChecks {
+    pub ip: String,
+    pub user: Option<String>,
+    pub checks: Vec<String>,
 }
 

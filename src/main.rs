@@ -374,13 +374,44 @@ async fn run(cfg: Config) -> Result<()> {
                         let stats = LxcCollector::collect(guest.vmid, &guest.name).await;
                         prom::update_lxc_detail(&stats);
 
-                        // Build services JSON
-                        let svcs: Vec<serde_json::Value> = stats.services.iter().map(|s| {
+                        let tracked_services = cfg_inner.services.lxc.iter().find(|l| l.vmid == guest.vmid);
+
+                        // Build services JSON for only tracked services
+                        let svcs: Vec<serde_json::Value> = stats.services.iter().filter(|s| {
+                            if let Some(tracked) = tracked_services {
+                                let name = s.name.replace(".service", "");
+                                tracked.checks.contains(&s.name) || tracked.checks.contains(&name)
+                            } else {
+                                false
+                            }
+                        }).map(|s| {
+                            let is_active = s.state == "active";
+                            
+                            // Fire alert if configured service is down
+                            if !is_active {
+                                // We check manually because async dispatch inside map is tricky, 
+                                // we will dispatch these below
+                            }
+
                             json!({
-                                "name": s.name,
-                                "status": if s.state == "active" { "running" } else { "stopped" }
+                                "name": s.name.replace(".service", ""),
+                                "status": if is_active { "running" } else { "failed" }
                             })
                         }).collect();
+                        
+                        // Dispatch alerts for tracked services that are down
+                        if let Some(tracked) = tracked_services {
+                            for s in &stats.services {
+                                let name = s.name.replace(".service", "");
+                                if (tracked.checks.contains(&s.name) || tracked.checks.contains(&name)) && s.state != "active" {
+                                    dispatcher.dispatch(Alert::ServiceUnavailable {
+                                        vmid: guest.vmid,
+                                        node: guest.node.clone(),
+                                        service: name,
+                                    }).await;
+                                }
+                            }
+                        }
 
                         // Build disk mounts JSON
                         let disks: Vec<serde_json::Value> = stats.disk_mounts.iter().map(|d| {

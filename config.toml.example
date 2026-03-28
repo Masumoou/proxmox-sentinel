@@ -88,6 +88,18 @@ cgroup_interval_secs         = 5    # Read cgroups every 5s (very cheap)
 vm_interval_secs             = 30   # Deep VM stats every 30s
 service_check_interval_secs  = 60   # Check services every 60s
 
+# ── Guest Services Monitoring (Optional) ─────────────────────────────────────
+# Defines internal systemd services to track per VM/LXC
+# [services.lxc]
+# [[services.lxc]]
+# vmid = 100
+# checks = ["apache2", "php8.3-fpm", "redis-server"]
+# 
+# [[services.vm]]
+# ip = "192.168.1.50"
+# user = "root"
+# checks = ["docker", "mariadb"]
+
 # ── HAProxy load balancer monitoring (optional) ──────────────────────────
 [haproxy]
 enabled       = false                              # Set to true to enable
