@@ -19,6 +19,7 @@ use prometheus::{
     register_gauge_vec, register_counter_vec,
     GaugeVec, CounterVec, TextEncoder, Encoder,
 };
+use subtle::ConstantTimeEq;
 use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
 use tracing::info;
@@ -443,8 +444,9 @@ async fn auth_middleware(
     if let Some(ref expected) = state.expected_auth {
         let auth_header = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).unwrap_or("");
         
-        // Use timing-safe compare in a real prod system, but this is fine for basic dashboard
-        if auth_header != expected {
+        // Use timing-safe compare to prevent timing attacks
+        let is_valid = bool::from(auth_header.as_bytes().ct_eq(expected.as_bytes()));
+        if !is_valid {
             let mut res = (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
             res.headers_mut().insert(
                 header::WWW_AUTHENTICATE,
