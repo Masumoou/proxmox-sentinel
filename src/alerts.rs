@@ -7,12 +7,11 @@
 // Implements basic deduplication: same alert won't re-fire within
 // a configurable silence window (default: 5 minutes).
 
-use anyhow::Result;
 use reqwest::Client;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+
 use tracing::{error, info, warn};
 
 use crate::collectors::logs::LogAlert;

@@ -9,9 +9,8 @@
 //   - Matched against alert patterns
 //   - Exported as Prometheus counters per severity/pattern
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -330,7 +329,7 @@ impl LogCollector {
     }
 }
 
-use std::cmp::Reverse;
+
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Commonly-watched Proxmox host logs

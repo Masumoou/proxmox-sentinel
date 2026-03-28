@@ -13,17 +13,15 @@ use axum::{
 use rust_embed::RustEmbed;
 use mime_guess::from_path;
 use prometheus::{
-    register_gauge_vec, register_counter_vec, register_gauge,
-    GaugeVec, CounterVec, Gauge, TextEncoder, Encoder,
+    register_gauge_vec, register_counter_vec,
+    GaugeVec, CounterVec, TextEncoder, Encoder,
 };
 use once_cell::sync::Lazy;
-use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::proxmox_api::{GuestKind, GuestStatus, NodeStatus, StorageStatus};
 use crate::collectors::lxc::LxcDetailedStats;
-use crate::collectors::logs::LogBuffer;
 
 #[derive(RustEmbed)]
 #[folder = "frontend/build/"]
@@ -393,7 +391,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    use futures::stream::StreamExt;
+    use futures::{stream::StreamExt, SinkExt};
     let (mut sender, mut receiver) = socket.split();
     let mut rx = state.tx.subscribe();
 
