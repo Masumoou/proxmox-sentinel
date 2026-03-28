@@ -6,6 +6,7 @@
   let nodes = $state<any[]>([]);
   let clusterCpu = $state(0);
   let clusterRam = $state(0);
+  let clusterSwap = $state(0);
   let clusterNet = $state('0 Mb/s');
   let clusterStorage = $state(0);
   let wsConnected = $state(false);
@@ -17,6 +18,7 @@
   const MAX_HISTORY = 10;
   let historyCpu = $state(Array(MAX_HISTORY).fill(0));
   let historyRam = $state(Array(MAX_HISTORY).fill(0));
+  let historySwap = $state(Array(MAX_HISTORY).fill(0));
   let historyNet = $state(Array(MAX_HISTORY).fill(0)); // Mocked as %
   let historyStorage = $state(Array(MAX_HISTORY).fill(0));
 
@@ -59,14 +61,18 @@
             const totalMem = nodes.reduce((a: number, n: any) => a + n.mem_total, 0);
             const usedDisk = nodes.reduce((a: number, n: any) => a + (n.disk_used || 0), 0);
             const totalDisk = nodes.reduce((a: number, n: any) => a + (n.disk_total || 0), 0);
+            const usedSwap = nodes.reduce((a: number, n: any) => a + (n.swap_used || 0), 0);
+            const totalSwap = nodes.reduce((a: number, n: any) => a + (n.swap_total || 0), 0);
             
             clusterCpu = Math.round(avgCpu * 100);
             clusterRam = totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0;
+            clusterSwap = totalSwap > 0 ? Math.round((usedSwap / totalSwap) * 100) : 0;
             clusterStorage = totalDisk > 0 ? Math.round((usedDisk / totalDisk) * 100) : 0;
             
             // Push history ticks for SVG Sparklines
             historyCpu = [...historyCpu.slice(1), clusterCpu];
             historyRam = [...historyRam.slice(1), clusterRam];
+            historySwap = [...historySwap.slice(1), clusterSwap];
             historyStorage = [...historyStorage.slice(1), clusterStorage];
             
             // Fake varying network percentage for the UI
@@ -272,6 +278,20 @@
           <div class="sparkline">
             <svg viewBox="0 0 80 20" style="width: 80px; height: 20px;">
               <polyline fill="none" stroke="var(--accent-cyan)" stroke-width="1.5" points={getPolylinePath(historyRam)} />
+            </svg>
+          </div>
+        </div>
+
+        <div class="overview-gauge-block">
+          <div class="gauge gauge-lg" style={gaugeStyle(clusterSwap, 'var(--accent-orange)')}>
+            <div class="gauge-inner gauge-inner-lg">
+              <span class="gauge-value">{clusterSwap}%</span>
+            </div>
+          </div>
+          <div class="overview-gauge-label">SWAP</div>
+          <div class="sparkline">
+            <svg viewBox="0 0 80 20" style="width: 80px; height: 20px;">
+              <polyline fill="none" stroke="var(--accent-orange)" stroke-width="1.5" points={getPolylinePath(historySwap)} />
             </svg>
           </div>
         </div>
