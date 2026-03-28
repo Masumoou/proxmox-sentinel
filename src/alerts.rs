@@ -42,7 +42,6 @@ pub enum Alert {
     ServiceUnavailable { vmid: u32, node: String, service: String },
     Test { message: String },
 }
-}
 
 impl Alert {
     pub fn key(&self) -> String {
