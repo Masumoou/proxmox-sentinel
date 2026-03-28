@@ -1,0 +1,88 @@
+# /etc/proxmox-sentinel/config.toml
+# proxmox-sentinel configuration
+
+[proxmox]
+api_url           = "https://10.10.207.1:8006"
+api_token_id      = "sentinel@pam!monitoring"
+api_token_secret  = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+nodes             = []          # empty = auto-discover all nodes
+insecure_tls      = true        # Proxmox uses self-signed cert by default
+
+[metrics]
+listen_addr = "0.0.0.0"
+listen_port = 9101              # Prometheus will scrape :9101/metrics
+
+[logs]
+tail_lines  = 100               # How many lines to read on initial startup
+buffer_size = 10000             # Lines kept in memory per log source
+
+# Log files to watch inside every LXC container (relative to container root)
+watch_paths = [
+    "/var/log/syslog",
+    "/var/log/auth.log",
+    "/var/log/apache2/error.log",
+    "/var/log/apache2/access.log",
+    "/var/log/nginx/error.log",
+    "/var/log/nginx/access.log",
+    "/var/log/php-fpm.log",
+    "/var/log/php8.2-fpm.log",
+    "/var/log/php8.3-fpm.log",
+    "/var/log/mysql/error.log",
+    "/var/log/postgresql/postgresql.log",
+    "/var/log/redis/redis-server.log",
+]
+
+# Alert patterns — matched against every watched log line using regex
+[[logs.alert_patterns]]
+name     = "php_fatal"
+pattern  = "(?i)fatal error|uncaught exception|PHP Fatal"
+severity = "warning"
+
+[[logs.alert_patterns]]
+name     = "oom_killer"
+pattern  = "Out of memory|oom-kill|Killed process"
+severity = "critical"
+
+[[logs.alert_patterns]]
+name     = "ssh_bruteforce"
+pattern  = "Failed password|Invalid user|authentication failure"
+severity = "warning"
+
+[[logs.alert_patterns]]
+name     = "disk_error"
+pattern  = "I/O error|EXT4-fs error|XFS.*error|Buffer I/O error"
+severity = "critical"
+
+[[logs.alert_patterns]]
+name     = "segfault"
+pattern  = "segfault|kernel BUG|general protection fault"
+severity = "critical"
+
+[[logs.alert_patterns]]
+name     = "apache_5xx"
+pattern  = "\" 5[0-9][0-9] "
+severity = "warning"
+
+[[logs.alert_patterns]]
+name     = "db_error"
+pattern  = "(?i)mysql.*error|postgres.*FATAL|deadlock detected"
+severity = "warning"
+
+[alerts]
+enabled           = true
+webhook_url       = ""          # Alertmanager / Grafana OnCall / Slack webhook
+cpu_threshold     = 90.0        # Alert if CPU > 90%
+memory_threshold  = 85.0        # Alert if memory > 85%
+disk_threshold    = 90.0        # Alert if disk > 90%
+
+[ssh]
+private_key_path = "/root/.ssh/id_ed25519"
+user             = "root"
+timeout_secs     = 10
+skip_vmids       = []           # VMIDs to skip SSH collection (Windows VMs etc.)
+
+[collection]
+api_interval_secs            = 15   # Poll Proxmox API every 15s
+cgroup_interval_secs         = 5    # Read cgroups every 5s (very cheap)
+vm_interval_secs             = 30   # Deep VM stats every 30s
+service_check_interval_secs  = 60   # Check services every 60s
