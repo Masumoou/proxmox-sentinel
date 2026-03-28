@@ -86,3 +86,11 @@ api_interval_secs            = 15   # Poll Proxmox API every 15s
 cgroup_interval_secs         = 5    # Read cgroups every 5s (very cheap)
 vm_interval_secs             = 30   # Deep VM stats every 30s
 service_check_interval_secs  = 60   # Check services every 60s
+
+# ── HAProxy load balancer monitoring (optional) ──────────────────────────
+[haproxy]
+enabled       = false                              # Set to true to enable
+stats_url     = "http://10.10.207.1:8404/stats;csv"  # HAProxy stats CSV endpoint
+# auth        = "admin:password"                   # Uncomment if stats page requires auth
+interval_secs = 10                                 # Poll interval
+

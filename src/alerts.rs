@@ -36,6 +36,7 @@ pub enum Alert {
     DiskFull { vmid: u32, name: String, mountpoint: String, use_pct: f64 },
     LogPattern(LogAlert),
     StorageUnavailable { storage: String, node: String },
+    HaproxyBackendDown { proxy: String, server: String, duration_secs: u64 },
 }
 
 impl Alert {
@@ -50,12 +51,15 @@ impl Alert {
             Alert::DiskFull { vmid, mountpoint, .. } => format!("disk_full:{vmid}:{mountpoint}"),
             Alert::LogPattern(l) => format!("log:{}:{}", l.source, l.pattern),
             Alert::StorageUnavailable { storage, node } => format!("storage:{node}:{storage}"),
+            Alert::HaproxyBackendDown { proxy, server, .. } => format!("haproxy_down:{proxy}:{server}"),
         }
     }
 
     pub fn severity(&self) -> &'static str {
         match self {
-            Alert::GuestDown { .. } | Alert::StorageUnavailable { .. } => "critical",
+            Alert::GuestDown { .. }
+            | Alert::StorageUnavailable { .. }
+            | Alert::HaproxyBackendDown { .. } => "critical",
             Alert::NodeHighCpu { cpu_pct, .. } | Alert::GuestHighCpu { cpu_pct, .. }
                 if *cpu_pct > 95.0 => "critical",
             Alert::NodeHighDisk { disk_pct, .. } | Alert::DiskFull { use_pct: disk_pct, .. }
@@ -91,6 +95,8 @@ impl Alert {
                     &l.line[..l.line.len().min(100)]),
             Alert::StorageUnavailable { storage, node } =>
                 format!("Storage {storage} unavailable on {node}"),
+            Alert::HaproxyBackendDown { proxy, server, duration_secs } =>
+                format!("HAProxy {proxy}/{server} DOWN for {duration_secs}s"),
         }
     }
 }

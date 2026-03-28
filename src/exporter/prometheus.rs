@@ -227,6 +227,55 @@ static LOG_ALERTS: Lazy<CounterVec> = Lazy::new(|| {
     ).unwrap()
 });
 
+// HAProxy metrics
+static HAPROXY_SERVER_UP: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "haproxy_server_up",
+        "HAProxy server status (1=UP, 0=DOWN)",
+        &["proxy", "server"]
+    ).unwrap()
+});
+
+static HAPROXY_SESSIONS: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "haproxy_server_sessions_current",
+        "HAProxy current sessions",
+        &["proxy", "server"]
+    ).unwrap()
+});
+
+static HAPROXY_BYTES_IN: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "haproxy_server_bytes_in_total",
+        "HAProxy bytes received",
+        &["proxy", "server"]
+    ).unwrap()
+});
+
+static HAPROXY_BYTES_OUT: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "haproxy_server_bytes_out_total",
+        "HAProxy bytes sent",
+        &["proxy", "server"]
+    ).unwrap()
+});
+
+static HAPROXY_HTTP_5XX: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "haproxy_server_http_5xx_total",
+        "HAProxy HTTP 5xx responses",
+        &["proxy", "server"]
+    ).unwrap()
+});
+
+static HAPROXY_DOWNTIME: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "haproxy_server_downtime_seconds",
+        "HAProxy server total downtime",
+        &["proxy", "server"]
+    ).unwrap()
+});
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Metric update functions
 // ──────────────────────────────────────────────────────────────────────────────
@@ -284,6 +333,22 @@ pub fn update_storage(s: &StorageStatus) {
 
 pub fn record_log_alert(source: &str, pattern: &str, severity: &str) {
     LOG_ALERTS.with_label_values(&[source, pattern, severity]).inc();
+}
+
+pub fn update_haproxy(stats: &crate::collectors::haproxy::HaproxyStats) {
+    for proxy in &stats.proxies {
+        for server in &proxy.servers {
+            let labels = &[proxy.name.as_str(), server.server_name.as_str()];
+            let up_val = if server.status == "UP" { 1.0 } else { 0.0 };
+
+            HAPROXY_SERVER_UP.with_label_values(labels).set(up_val);
+            HAPROXY_SESSIONS.with_label_values(labels).set(server.sessions_current as f64);
+            HAPROXY_BYTES_IN.with_label_values(labels).set(server.bytes_in as f64);
+            HAPROXY_BYTES_OUT.with_label_values(labels).set(server.bytes_out as f64);
+            HAPROXY_HTTP_5XX.with_label_values(labels).set(server.http_5xx as f64);
+            HAPROXY_DOWNTIME.with_label_values(labels).set(server.downtime_secs as f64);
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

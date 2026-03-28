@@ -19,6 +19,8 @@ pub struct Config {
     pub alerts: AlertConfig,
     pub ssh: SshConfig,
     pub collection: CollectionConfig,
+    #[serde(default)]
+    pub haproxy: Option<HaproxyConfig>,
 }
 
 impl Config {
@@ -191,4 +193,29 @@ fn default_vm_interval() -> u64 {
 
 fn default_service_interval() -> u64 {
     60
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// HAProxy config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HaproxyConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_haproxy_url")]
+    pub stats_url: String,
+    /// Basic auth in "user:password" format
+    #[serde(default)]
+    pub auth: Option<String>,
+    #[serde(default = "default_haproxy_interval")]
+    pub interval_secs: u64,
+}
+
+fn default_haproxy_url() -> String {
+    "http://127.0.0.1:8404/stats;csv".to_string()
+}
+
+fn default_haproxy_interval() -> u64 {
+    10
 }

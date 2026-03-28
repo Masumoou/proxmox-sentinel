@@ -35,6 +35,7 @@ use alerts::{Alert, AlertDispatcher};
 use collectors::lxc::LxcCollector;
 use collectors::logs::{LogCollector, CONTAINER_LOGS, PROXMOX_HOST_LOGS};
 use collectors::vm::VmCollector;
+use collectors::haproxy::HaproxyCollector;
 use config::Config;
 use exporter::prometheus as prom;
 use proxmox_api::{GuestKind, ProxmoxClient};
@@ -444,6 +445,94 @@ async fn run(cfg: Config) -> Result<()> {
                 let _ = ws_tx.send(event.to_string());
             }
         });
+    }
+
+    // ── Task 4: HAProxy stats ──────────────────────────────────────────────
+    if let Some(ref haproxy_cfg) = cfg.haproxy {
+        if haproxy_cfg.enabled {
+            let ha_cfg = haproxy_cfg.clone();
+            let ws_tx = ws_tx.clone();
+            let alert_cfg = cfg.alerts.clone();
+
+            match HaproxyCollector::new(&ha_cfg) {
+                Ok(collector) => {
+                    info!("HAProxy monitoring enabled: {}", ha_cfg.stats_url);
+                    tokio::spawn(async move {
+                        let mut ticker = interval(Duration::from_secs(ha_cfg.interval_secs));
+                        let mut dispatcher = AlertDispatcher::new(alert_cfg);
+
+                        loop {
+                            ticker.tick().await;
+
+                            match collector.collect(&ha_cfg).await {
+                                Ok(stats) => {
+                                    // Update Prometheus metrics
+                                    prom::update_haproxy(&stats);
+
+                                    // Fire alerts for down servers
+                                    for (proxy, server, downtime) in
+                                        HaproxyCollector::find_down_servers(&stats)
+                                    {
+                                        dispatcher
+                                            .dispatch(Alert::HaproxyBackendDown {
+                                                proxy: proxy.to_string(),
+                                                server: server.to_string(),
+                                                duration_secs: downtime,
+                                            })
+                                            .await;
+                                    }
+
+                                    // Build WebSocket payload
+                                    let proxies_json: Vec<serde_json::Value> = stats
+                                        .proxies
+                                        .iter()
+                                        .map(|p| {
+                                            let servers: Vec<serde_json::Value> = p
+                                                .servers
+                                                .iter()
+                                                .map(|s| {
+                                                    json!({
+                                                        "name": s.server_name,
+                                                        "status": s.status,
+                                                        "sessions": s.sessions_current,
+                                                        "bytes_in": s.bytes_in,
+                                                        "bytes_out": s.bytes_out,
+                                                        "http_5xx": s.http_5xx,
+                                                        "check_status": s.check_status,
+                                                        "downtime": s.downtime_secs,
+                                                        "weight": s.weight,
+                                                        "active": s.active
+                                                    })
+                                                })
+                                                .collect();
+
+                                            json!({
+                                                "name": p.name,
+                                                "frontend_status": p.frontend.as_ref().map(|f| f.status.as_str()).unwrap_or("unknown"),
+                                                "backend_status": p.backend_summary.as_ref().map(|b| b.status.as_str()).unwrap_or("unknown"),
+                                                "servers": servers
+                                            })
+                                        })
+                                        .collect();
+
+                                    let event = json!({
+                                        "type": "haproxy_update",
+                                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                                        "total_servers": stats.total_servers,
+                                        "servers_up": stats.servers_up,
+                                        "servers_down": stats.servers_down,
+                                        "proxies": proxies_json
+                                    });
+                                    let _ = ws_tx.send(event.to_string());
+                                }
+                                Err(e) => warn!("HAProxy stats error: {e}"),
+                            }
+                        }
+                    });
+                }
+                Err(e) => error!("Failed to init HAProxy collector: {e}"),
+            }
+        }
     }
 
     // ── Block forever ─────────────────────────────────────────────────────
