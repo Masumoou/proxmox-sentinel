@@ -13,6 +13,29 @@
   let detailMap: Record<number, any> = {};
   let alerts = $state<any[]>([]);
   let haproxyStats = $state<any>(null);
+  let showSettings = $state(false);
+  let webhookTestUrl = $state('');
+  let testStatus = $state({type: 'idle', msg: ''});
+
+  async function sendTestAlert() {
+    if (!webhookTestUrl) return;
+    testStatus = {type: 'loading', msg: 'SENDING...'};
+    try {
+      const res = await fetch('/api/v1/alerts/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook_url: webhookTestUrl })
+      });
+      if (res.ok) {
+        testStatus = {type: 'success', msg: 'SUCCESS! CHECK YOUR CHANNEL.'};
+      } else {
+        testStatus = {type: 'error', msg: 'FAILED TO SEND ALERT.'};
+      }
+    } catch (e) {
+      testStatus = {type: 'error', msg: 'CONNECTION ERROR.'};
+    }
+    setTimeout(() => { if (testStatus.type !== 'idle') testStatus = {type: 'idle', msg: ''}; }, 5000);
+  }
 
   // Sparkline history arrays (keep last 10 ticks)
   const MAX_HISTORY = 10;
@@ -157,6 +180,15 @@
 </script>
 
 <div class="dashboard-page">
+  <div class="dash-header">
+    <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v1.2</span></div>
+    <div class="header-actions">
+      <div class="conn-status" class:conn-online={wsConnected}>
+        {wsConnected ? 'LIVE TELEMETRY' : 'RECONNECTING...'}
+      </div>
+      <button class="neon-btn-sm" onclick={() => showSettings = true}>⚙ WEBHOOK INTEGRATION</button>
+    </div>
+  </div>
 
   <!-- ── VM / LXC Cards Grid ─────────────────────────────── -->
   <div class="guest-grid">
@@ -366,9 +398,53 @@
           </div>
         </div>
       {/if}
+  </div>
+</div>
+</div>
+
+{#if showSettings}
+<div 
+  class="modal-overlay" 
+  onclick={() => showSettings = false} 
+  onkeydown={(e) => e.key === 'Escape' && (showSettings = false)}
+  role="button"
+  tabindex="-1"
+>
+  <div 
+    class="modal-content neon-card" 
+    onclick={(e) => e.stopPropagation()} 
+    onkeydown={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+  >
+    <div class="modal-header">
+      <div class="modal-title">WEBHOOK INTEGRATION</div>
+      <button class="close-btn" onclick={() => showSettings = false} aria-label="Close integration panel">×</button>
+    </div>
+    
+    <div class="settings-group">
+      <label for="webhook-url-input">WEBHOOK NOTIFICATIONS</label>
+      <div class="webhook-test-row">
+        <input 
+          id="webhook-url-input"
+          type="text" 
+          bind:value={webhookTestUrl} 
+          placeholder="https://discord.com/api/webhooks/..." 
+          class="neon-input" 
+        />
+        <button class="neon-btn" onclick={sendTestAlert} disabled={testStatus.type === 'loading'}>
+          {testStatus.type === 'loading' ? '...' : 'SEND TEST'}
+        </button>
+      </div>
+      <div class="status-msg" class:msg-success={testStatus.type === 'success'} class:msg-error={testStatus.type === 'error'}>
+        {testStatus.msg}
+      </div>
+      <small style="color: var(--text-dim);">* This tests a one-shot alert. To persist, update your config.toml.</small>
     </div>
   </div>
 </div>
+{/if}
 
 <style>
   .dashboard-page {
@@ -376,7 +452,191 @@
     flex-direction: column;
     gap: 16px;
     height: 100%;
+    padding: 20px;
+    background: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0d0d1a 100%);
   }
+
+  .dash-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 12px;
+  }
+
+  .system-brand {
+    font-weight: 800;
+    font-size: 1.2rem;
+    letter-spacing: 3px;
+    color: var(--text-primary);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .conn-status {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--accent-red);
+    position: relative;
+    padding-left: 12px;
+  }
+
+  .conn-status::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-red);
+    box-shadow: 0 0 8px var(--accent-red);
+  }
+
+  .conn-online {
+    color: var(--accent-green);
+  }
+
+  .conn-online::before {
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+  }
+
+  /* ── Modal & Settings ─────────────────── */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-width: 500px;
+    min-height: 200px;
+    padding: 24px;
+    background: #0d0d1a;
+    border-color: var(--accent-magenta);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+
+  .modal-title {
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.5rem;
+    cursor: pointer;
+  }
+
+  .settings-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .settings-group label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--accent-magenta);
+  }
+
+  .webhook-test-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  .neon-input {
+    flex: 1;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    padding: 10px 14px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 0.85rem;
+  }
+
+  .neon-input:focus {
+    outline: none;
+    border-color: var(--accent-magenta);
+    box-shadow: 0 0 8px rgba(255, 51, 85, 0.3);
+  }
+
+  .neon-btn {
+    background: var(--accent-magenta);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 0 16px;
+    font-weight: 800;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .neon-btn:hover:not(:disabled) {
+    box-shadow: 0 0 15px var(--accent-magenta);
+  }
+
+  .neon-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .neon-btn-sm {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .neon-btn-sm:hover {
+    background: rgba(182, 68, 224, 0.2);
+    border-color: var(--accent-purple);
+  }
+
+  .status-msg {
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-top: 4px;
+    min-height: 1.2rem;
+  }
+
+  .msg-success { color: var(--accent-green); }
+  .msg-error { color: var(--accent-red); }
 
   /* ── Guest Grid ────────────────────────────────────────── */
   .guest-grid {

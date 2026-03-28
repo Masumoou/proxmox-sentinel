@@ -8,9 +8,10 @@ use axum::{
     http::{header, StatusCode, Method, HeaderValue},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
-    Router,
+    routing::{get, post},
+    Router, Json,
 };
+use serde::Deserialize;
 use base64::prelude::*;
 use rust_embed::RustEmbed;
 use mime_guess::from_path;
@@ -415,6 +416,7 @@ impl MetricsServer {
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/api/status", get(status_handler))
+            .route("/api/v1/alerts/test", post(test_alert_handler))
             .route("/ws", get(ws_handler))
             .fallback(static_handler)
             .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
@@ -551,4 +553,30 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         _ = (&mut send_task) => recv_task.abort(),
         _ = (&mut recv_task) => send_task.abort(),
     }
+}
+
+#[derive(Deserialize)]
+struct TestAlertRequest {
+    webhook_url: String,
+}
+
+async fn test_alert_handler(
+    Json(payload): Json<TestAlertRequest>,
+) -> impl IntoResponse {
+    let mut dispatcher = crate::alerts::AlertDispatcher::new(
+        crate::config::AlertConfig {
+            enabled: true,
+            webhook_url: Some(payload.webhook_url),
+            cpu_threshold: 100.0,
+            memory_threshold: 100.0,
+            disk_threshold: 100.0,
+        },
+        None,
+    );
+
+    dispatcher.dispatch(crate::alerts::Alert::Test {
+        message: "Manually triggered from Sentinel UI".to_string(),
+    }).await;
+
+    (StatusCode::OK, "Test alert sent")
 }

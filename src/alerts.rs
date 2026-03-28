@@ -40,6 +40,8 @@ pub enum Alert {
     StorageUnavailable { storage: String, node: String },
     HaproxyBackendDown { proxy: String, server: String, duration_secs: u64 },
     ServiceUnavailable { vmid: u32, node: String, service: String },
+    Test { message: String },
+}
 }
 
 impl Alert {
@@ -56,6 +58,7 @@ impl Alert {
             Alert::StorageUnavailable { storage, node } => format!("storage:{node}:{storage}"),
             Alert::HaproxyBackendDown { proxy, server, .. } => format!("haproxy_down:{proxy}:{server}"),
             Alert::ServiceUnavailable { vmid, service, .. } => format!("service_down:{vmid}:{service}"),
+            Alert::Test { .. } => format!("test_alert:{}", chrono::Utc::now().timestamp()),
         }
     }
 
@@ -104,6 +107,8 @@ impl Alert {
                 format!("HAProxy {proxy}/{server} DOWN for {duration_secs}s"),
             Alert::ServiceUnavailable { vmid, node, service } =>
                 format!("Critical service '{service}' is DOWN on VM {vmid} ({node})"),
+            Alert::Test { message } =>
+                format!("SENTINEL TEST ALERT: {message}"),
         }
     }
 }
