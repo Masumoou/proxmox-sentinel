@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::process::Command;
-use tracing::{debug, warn};
+use tracing::debug;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Output types
@@ -220,7 +220,7 @@ impl LxcCollector {
 
     async fn find_init_pid(vmid: u32) -> Option<u32> {
         // pct list gives the init pid, or we can scan /proc
-        let out = Command::new("pct")
+        let _out = Command::new("pct")
             .args(["list"])
             .output()
             .await

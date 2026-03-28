@@ -172,7 +172,7 @@ async fn run(cfg: Config) -> Result<()> {
     let api_secs = cfg.collection.api_interval_secs;
     let cgroup_secs = cfg.collection.cgroup_interval_secs;
     let vm_secs = cfg.collection.vm_interval_secs;
-    let svc_secs = cfg.collection.service_check_interval_secs;
+    let _svc_secs = cfg.collection.service_check_interval_secs;
 
     let nodes = Arc::new(nodes);
     let cfg = Arc::new(cfg);
