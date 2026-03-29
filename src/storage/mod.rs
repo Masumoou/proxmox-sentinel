@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
-use tracing::{info, warn};
+use tracing::info;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Storage config (added to main Config)
@@ -170,6 +170,7 @@ impl Storage {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn insert_log_line(&self, source: &str, severity: &str, line: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

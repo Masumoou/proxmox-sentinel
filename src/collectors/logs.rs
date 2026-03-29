@@ -100,6 +100,7 @@ impl LogCollector {
         }
     }
 
+    #[allow(dead_code)]
     pub fn buffer(&self) -> LogBuffer {
         self.buffer.clone()
     }
@@ -301,6 +302,7 @@ impl LogCollector {
     }
 
     /// Get last N log lines for a specific source
+    #[allow(dead_code)]
     pub fn recent_lines(&self, source: &str, n: usize) -> Vec<LogLine> {
         let guard = self.buffer.lock().unwrap();
         guard
@@ -310,11 +312,13 @@ impl LogCollector {
     }
 
     /// Get all sources being watched
+    #[allow(dead_code)]
     pub fn sources(&self) -> Vec<String> {
         self.buffer.lock().unwrap().keys().cloned().collect()
     }
 
     /// Get alert-level lines across all sources (last N)
+    #[allow(dead_code)]
     pub fn recent_alerts(&self, n: usize) -> Vec<LogLine> {
         let guard = self.buffer.lock().unwrap();
         let mut alerts: Vec<LogLine> = guard

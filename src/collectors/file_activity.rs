@@ -33,7 +33,7 @@ pub async fn run_collector(cfg: FileActivityConfig, ws_tx: broadcast::Sender<Str
         let path_clone = path.clone();
 
         tokio::spawn(async move {
-            let mut child = Command::new("tail")
+            let child = Command::new("tail")
                 .arg("-F")
                 .arg("-n")
                 .arg("0") // start at end

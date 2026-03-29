@@ -439,6 +439,7 @@ impl LxcCollector {
 
 /// Read the last N lines of a log file from inside an LXC rootfs
 /// without entering the container at all.
+#[allow(dead_code)]
 pub async fn tail_lxc_log(vmid: u32, log_path: &str, lines: usize) -> Result<Vec<String>> {
     // LXC rootfs is at /var/lib/lxc/<vmid>/rootfs/ on the host
     let host_path = format!("/var/lib/lxc/{}/rootfs{}", vmid, log_path);
@@ -446,6 +447,7 @@ pub async fn tail_lxc_log(vmid: u32, log_path: &str, lines: usize) -> Result<Vec
 }
 
 /// Watch a log file inside an LXC rootfs using inotify (via tokio notify crate)
+#[allow(dead_code)]
 pub fn lxc_log_host_path(vmid: u32, log_path: &str) -> PathBuf {
     PathBuf::from(format!("/var/lib/lxc/{}/rootfs{}", vmid, log_path))
 }
@@ -465,6 +467,7 @@ async fn read_u64(path: impl AsRef<Path>) -> Result<u64> {
     read_file(path).await?.trim().parse().map_err(Into::into)
 }
 
+#[allow(dead_code)]
 async fn tail_file(path: &str, lines: usize) -> Result<Vec<String>> {
     let out = Command::new("tail")
         .args(["-n", &lines.to_string(), path])

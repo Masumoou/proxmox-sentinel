@@ -52,6 +52,7 @@ impl Config {
         print!("{}", include_str!("../config.toml.example"));
     }
 
+    #[allow(dead_code)]
     pub fn validate(&self) -> Result<()> {
         if self.alerts.memory_threshold <= 0.0 || self.alerts.memory_threshold > 100.0 {
             anyhow::bail!("memory_threshold must be between 0 and 100");
@@ -342,6 +343,7 @@ pub struct ServicesConfig {
     #[serde(default)]
     pub lxc: Vec<LxcServiceChecks>,
     #[serde(default)]
+    #[allow(dead_code)]
     pub vm: Vec<VmServiceChecks>,
 }
 
@@ -358,6 +360,7 @@ pub struct LxcServiceChecks {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct VmServiceChecks {
     pub ip: String,
     pub user: Option<String>,
@@ -430,8 +433,10 @@ pub struct ObjectStorageConfig {
     #[serde(default)]
     pub bucket: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub access_key: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub secret_key: String,
     #[serde(default)]
     pub interval_secs: u64,

@@ -6,7 +6,6 @@
 
 use crate::alerts::{Alert, AlertDispatcher};
 use crate::config::IntelligenceConfig;
-use crate::proxmox_api::ProxmoxClient;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{info, warn};

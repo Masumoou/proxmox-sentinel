@@ -79,6 +79,7 @@ pub async fn run_agent(cfg: Arc<Config>, mut rx: broadcast::Receiver<String>) {
 #[derive(Clone)]
 pub struct HubState {
     pub ws_tx: broadcast::Sender<String>,
+    #[allow(dead_code)]
     pub storage: Arc<Storage>,
     pub secret: String,
 }

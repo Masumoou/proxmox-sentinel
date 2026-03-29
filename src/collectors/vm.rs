@@ -166,6 +166,7 @@ impl<'a> VmCollector<'a> {
     }
 
     /// Tail the last N lines of a log file on a VM via SSH
+    #[allow(dead_code)]
     pub async fn tail_log(&self, ip: &str, path: &str, lines: usize) -> Result<Vec<String>> {
         let cfg = self.ssh_cfg.clone();
         let ip = ip.to_string();
@@ -181,6 +182,7 @@ impl<'a> VmCollector<'a> {
     }
 
     /// Check status of specific services on a VM
+    #[allow(dead_code)]
     pub async fn check_services(&self, ip: &str, service_names: &[&str]) -> Result<Vec<VmService>> {
         let cfg = self.ssh_cfg.clone();
         let ip = ip.to_string();

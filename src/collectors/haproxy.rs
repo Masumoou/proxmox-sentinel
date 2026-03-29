@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Serialize;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::config::HaproxyConfig;
 
@@ -137,7 +137,7 @@ pub struct HaproxyCollector {
 
 impl HaproxyCollector {
     pub fn new(cfg: &HaproxyConfig) -> Result<Self> {
-        let mut builder = Client::builder()
+        let builder = Client::builder()
             .timeout(Duration::from_secs(10));
 
         // Add basic auth via the URL or header

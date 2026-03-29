@@ -255,6 +255,7 @@ static STORAGE_AVAIL: Lazy<GaugeVec> = Lazy::new(|| {
 });
 
 // Log alerts
+#[allow(dead_code)]
 static LOG_ALERTS: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "pve_log_alert_total",
@@ -450,6 +451,7 @@ pub fn update_storage(s: &StorageStatus) {
     STORAGE_AVAIL.with_label_values(labels).set(s.avail as f64);
 }
 
+#[allow(dead_code)]
 pub fn record_log_alert(source: &str, pattern: &str, severity: &str) {
     LOG_ALERTS.with_label_values(&[source, pattern, severity]).inc();
 }

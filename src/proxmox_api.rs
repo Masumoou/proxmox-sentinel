@@ -83,6 +83,7 @@ pub struct StorageStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct BackupJob {
     pub id: String,
     pub node: String,
@@ -97,6 +98,7 @@ pub struct BackupJob {
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct RawNode {
     node: String,
     status: String,
@@ -304,6 +306,7 @@ impl ProxmoxClient {
     }
 
     /// Get detailed current status for a single VM
+    #[allow(dead_code)]
     pub async fn vm_status(&self, node: &str, vmid: u32) -> Result<GuestStatus> {
         let raw: RawGuest = self
             .get(&format!("/nodes/{node}/qemu/{vmid}/status/current"))
@@ -312,6 +315,7 @@ impl ProxmoxClient {
     }
 
     /// Get detailed current status for a single LXC
+    #[allow(dead_code)]
     pub async fn lxc_status(&self, node: &str, vmid: u32) -> Result<GuestStatus> {
         let raw: RawGuest = self
             .get(&format!("/nodes/{node}/lxc/{vmid}/status/current"))
@@ -375,6 +379,7 @@ impl ProxmoxClient {
             #[serde(rename = "out-data")]
             out_data: Option<String>,
             #[serde(rename = "err-data")]
+            #[allow(dead_code)]
             err_data: Option<String>,
         }
 
@@ -431,6 +436,7 @@ impl ProxmoxClient {
 
     // ── Cluster ───────────────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub async fn cluster_status(&self) -> Result<serde_json::Value> {
         self.get("/cluster/status").await
     }

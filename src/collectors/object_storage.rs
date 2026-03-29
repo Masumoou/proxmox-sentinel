@@ -7,7 +7,7 @@ use crate::alerts::{Alert, AlertDispatcher};
 use crate::config::ObjectStorageConfig;
 use std::time::Duration;
 use tokio::time::interval;
-use tracing::{info, warn};
+use tracing::info;
 
 pub async fn run_collector(cfg: ObjectStorageConfig, mut dispatcher: AlertDispatcher) {
     if !cfg.enabled || cfg.endpoint.is_empty() {

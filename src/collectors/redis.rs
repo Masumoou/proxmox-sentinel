@@ -5,7 +5,6 @@
 
 use crate::alerts::{Alert, AlertDispatcher};
 use crate::config::RedisConfig;
-use redis::AsyncCommands;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{info, warn};
@@ -22,7 +21,7 @@ pub async fn run_collector(cfg: RedisConfig, mut dispatcher: AlertDispatcher) {
         ticker.tick().await;
 
         match redis::Client::open(cfg.url.clone()) {
-            Ok(client) => match client.get_async_connection().await {
+            Ok(client) => match client.get_multiplexed_async_connection().await {
                 Ok(mut con) => {
                     // Try to get INFO memory
                     let info: redis::RedisResult<String> = redis::cmd("INFO").arg("memory").query_async(&mut con).await;
