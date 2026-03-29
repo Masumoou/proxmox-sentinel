@@ -38,6 +38,9 @@
       <a href="/logs" class="nav-item" class:nav-active={currentPath === '/logs'}>
         <span class="nav-icon">▤</span> LOGS
       </a>
+      <a href="/haproxy" class="nav-item" class:nav-active={currentPath === '/haproxy'}>
+        <span class="nav-icon">◓</span> HAPROXY
+      </a>
     </nav>
   </aside>
 

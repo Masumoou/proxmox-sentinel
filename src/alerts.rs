@@ -40,6 +40,13 @@ pub enum Alert {
     StorageUnavailable { storage: String, node: String },
     HaproxyBackendDown { proxy: String, server: String, duration_secs: u64 },
     ServiceUnavailable { vmid: u32, node: String, service: String },
+    PostgresDown { url: String, _error: String },
+    RedisDown { url: String, _error: String },
+    S3Degraded { endpoint: String, bucket: String, _error: String },
+    MigrationDetected { vmid: u32, name: String, from_node: String, to_node: String },
+    NodePressureCritical { node: String, mem_pct: f64, suggest_vmid: Option<u32>, target_node: Option<String> },
+    VmConnectionLost { vmid: u32, name: String, node: String },
+    OomKilled { node: String, process: String },
     Test { message: String },
 }
 
@@ -57,6 +64,13 @@ impl Alert {
             Alert::StorageUnavailable { storage, node } => format!("storage:{node}:{storage}"),
             Alert::HaproxyBackendDown { proxy, server, .. } => format!("haproxy_down:{proxy}:{server}"),
             Alert::ServiceUnavailable { vmid, service, .. } => format!("service_down:{vmid}:{service}"),
+            Alert::PostgresDown { url, .. } => format!("postgres_down:{url}"),
+            Alert::RedisDown { url, .. } => format!("redis_down:{url}"),
+            Alert::S3Degraded { endpoint, bucket, .. } => format!("s3_degraded:{endpoint}:{bucket}"),
+            Alert::MigrationDetected { vmid, from_node, to_node, .. } => format!("migration:{vmid}:{from_node}:{to_node}"),
+            Alert::NodePressureCritical { node, .. } => format!("node_pressure:{node}"),
+            Alert::VmConnectionLost { vmid, .. } => format!("vm_conn_lost:{vmid}"),
+            Alert::OomKilled { node, process } => format!("oom_killed:{node}:{process}"),
             Alert::Test { .. } => format!("test_alert:{}", chrono::Utc::now().timestamp()),
         }
     }
@@ -66,7 +80,14 @@ impl Alert {
             Alert::GuestDown { .. }
             | Alert::StorageUnavailable { .. }
             | Alert::HaproxyBackendDown { .. }
-            | Alert::ServiceUnavailable { .. } => "critical",
+            | Alert::ServiceUnavailable { .. }
+            | Alert::PostgresDown { .. }
+            | Alert::RedisDown { .. }
+            | Alert::S3Degraded { .. }
+            | Alert::NodePressureCritical { .. }
+            | Alert::OomKilled { .. } => "critical",
+            Alert::VmConnectionLost { .. } => "warning",
+            Alert::MigrationDetected { .. } => "info",
             Alert::NodeHighCpu { cpu_pct, .. } | Alert::GuestHighCpu { cpu_pct, .. }
                 if *cpu_pct > 95.0 => "critical",
             Alert::NodeHighDisk { disk_pct, .. } | Alert::DiskFull { use_pct: disk_pct, .. }
@@ -106,6 +127,25 @@ impl Alert {
                 format!("HAProxy {proxy}/{server} DOWN for {duration_secs}s"),
             Alert::ServiceUnavailable { vmid, node, service } =>
                 format!("Critical service '{service}' is DOWN on VM {vmid} ({node})"),
+            Alert::PostgresDown { url, _error } =>
+                format!("PostgreSQL down at {url}: {_error}"),
+            Alert::RedisDown { url, _error } =>
+                format!("Redis down at {url}: {_error}"),
+            Alert::S3Degraded { endpoint, bucket, _error } =>
+                format!("S3 degraded at {endpoint} bucket {bucket}: {_error}"),
+            Alert::MigrationDetected { vmid, name, from_node, to_node } =>
+                format!("VM {name} ({vmid}) migrated from {from_node} to {to_node}"),
+            Alert::NodePressureCritical { node, mem_pct, suggest_vmid, target_node } => {
+                if let (Some(vmid), Some(target)) = (suggest_vmid, target_node) {
+                    format!("Node {node} pressure critical ({mem_pct:.1}% mem). Migration suggested: `qm migrate {vmid} {target} --online`")
+                } else {
+                    format!("Node {node} pressure critical ({mem_pct:.1}% mem).")
+                }
+            },
+            Alert::VmConnectionLost { vmid, name, node } =>
+                format!("VM {name} ({vmid}) on {node} lost connection (agent/ssh)"),
+            Alert::OomKilled { node, process } =>
+                format!("OOM Killer triggered on {node} for process '{process}'"),
             Alert::Test { message } =>
                 format!("SENTINEL TEST ALERT: {message}"),
         }

@@ -265,7 +265,12 @@ impl ProxmoxClient {
             load_avg5: load.get(1).map(parse_load).unwrap_or(0.0),
             load_avg15: load.get(2).map(parse_load).unwrap_or(0.0),
             uptime: raw.uptime,
-            kernel_version: String::new(),
+            kernel_version: raw.uname
+                .as_ref()
+                .and_then(|u| u.get("sysname"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             pve_version: raw.pve_version.unwrap_or_default(),
         })
     }

@@ -13,7 +13,7 @@
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
   }
 
-  let lxcGuests = $derived(guests.filter(g => g.type === 'LXC'));
+  let lxcGuests = $derived(guests.filter(g => (g.type || '').toLowerCase() === 'lxc'));
 
   onMount(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

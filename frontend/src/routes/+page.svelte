@@ -64,88 +64,108 @@
     return `background: conic-gradient(${color} ${pct * 3.6}deg, rgba(255,255,255,0.04) 0deg);`;
   }
 
+  let reconnectAttempts = $state(0);
+
   onMount(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    ws.onopen = () => { wsConnected = true; };
-    ws.onclose = () => { wsConnected = false; };
+    let ws: WebSocket;
+    let reconnectTimer: any;
+    
+    function connect() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      
+      ws.onopen = () => { 
+        wsConnected = true; 
+        reconnectAttempts = 0;
+      };
+      
+      ws.onclose = () => { 
+        wsConnected = false;
+        reconnectAttempts++;
+        let backoff = Math.min(3 * Math.pow(2, reconnectAttempts - 1), 30);
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, backoff * 1000);
+      };
 
-    ws.onmessage = (e) => {
-      try {
-        const p = JSON.parse(e.data);
+      ws.onmessage = (e) => {
+        try {
+          const p = JSON.parse(e.data);
 
-        if (p.type === 'cluster_update') {
-          nodes = p.nodes || [];
-          const guestList = p.guests || [];
+          if (p.type === 'cluster_update') {
+            nodes = p.nodes || [];
+            const guestList = p.guests || [];
 
-          if (nodes.length > 0) {
-            const avgCpu = nodes.reduce((a: number, n: any) => a + n.cpu, 0) / nodes.length;
-            const usedMem = nodes.reduce((a: number, n: any) => a + n.mem_used, 0);
-            const totalMem = nodes.reduce((a: number, n: any) => a + n.mem_total, 0);
-            const usedDisk = nodes.reduce((a: number, n: any) => a + (n.disk_used || 0), 0);
-            const totalDisk = nodes.reduce((a: number, n: any) => a + (n.disk_total || 0), 0);
-            const usedSwap = nodes.reduce((a: number, n: any) => a + (n.swap_used || 0), 0);
-            const totalSwap = nodes.reduce((a: number, n: any) => a + (n.swap_total || 0), 0);
-            
-            clusterCpu = Math.round(avgCpu * 100);
-            clusterRam = totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0;
-            clusterSwap = totalSwap > 0 ? Math.round((usedSwap / totalSwap) * 100) : 0;
-            clusterStorage = totalDisk > 0 ? Math.round((usedDisk / totalDisk) * 100) : 0;
-            
-            // Push history ticks for SVG Sparklines
-            historyCpu = [...historyCpu.slice(1), clusterCpu];
-            historyRam = [...historyRam.slice(1), clusterRam];
-            historySwap = [...historySwap.slice(1), clusterSwap];
-            historyStorage = [...historyStorage.slice(1), clusterStorage];
-            
-            // Fake varying network percentage for the UI
-            let netVal = Math.floor(Math.random() * 80) + 10; 
-            historyNet = [...historyNet.slice(1), netVal];
-            clusterNet = `${netVal * 2}0 Mb/s`;
+            if (nodes.length > 0) {
+              const avgCpu = nodes.reduce((a: number, n: any) => a + n.cpu, 0) / nodes.length;
+              const usedMem = nodes.reduce((a: number, n: any) => a + n.mem_used, 0);
+              const totalMem = nodes.reduce((a: number, n: any) => a + n.mem_total, 0);
+              const usedDisk = nodes.reduce((a: number, n: any) => a + (n.disk_used || 0), 0);
+              const totalDisk = nodes.reduce((a: number, n: any) => a + (n.disk_total || 0), 0);
+              const usedSwap = nodes.reduce((a: number, n: any) => a + (n.swap_used || 0), 0);
+              const totalSwap = nodes.reduce((a: number, n: any) => a + (n.swap_total || 0), 0);
+              
+              clusterCpu = Math.round(avgCpu * 100);
+              clusterRam = totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0;
+              clusterSwap = totalSwap > 0 ? Math.round((usedSwap / totalSwap) * 100) : 0;
+              clusterStorage = totalDisk > 0 ? Math.round((usedDisk / totalDisk) * 100) : 0;
+              
+              // Push history ticks for SVG Sparklines
+              historyCpu = [...historyCpu.slice(1), clusterCpu];
+              historyRam = [...historyRam.slice(1), clusterRam];
+              historySwap = [...historySwap.slice(1), clusterSwap];
+              historyStorage = [...historyStorage.slice(1), clusterStorage];
+              
+              // Fake varying network percentage for the UI
+              let netVal = Math.floor(Math.random() * 80) + 10; 
+              historyNet = [...historyNet.slice(1), netVal];
+              clusterNet = `${netVal * 2}0 Mb/s`;
+            }
+
+            guests = guestList.map((g: any) => {
+              const detail = detailMap[g.vmid] || {};
+              return {
+                id: g.vmid,
+                name: g.name,
+                node: g.node,
+                type: g.type === 'lxc' ? 'LXC' : 'VM',
+                role: getRoleLabel(g.name),
+                os: g.type === 'lxc' ? 'Debian' : 'Ubuntu',
+                status: g.status,
+                cpu: Math.round(g.cpu * 100),
+                ram: formatBytes(g.mem),
+                maxram: formatBytes(g.maxmem),
+                bandwidth_up: '↑ 12Mb/s',
+                bandwidth_val: formatBytes(g.mem > 0 ? g.mem * 0.01 : 0),
+                services: detail.services || [],
+                disk_mounts: detail.disk_mounts || [],
+              };
+            });
           }
 
-          guests = guestList.map((g: any) => {
-            const detail = detailMap[g.vmid] || {};
-            return {
-              id: g.vmid,
-              name: g.name,
-              node: g.node,
-              type: g.type === 'lxc' ? 'LXC' : 'VM',
-              role: getRoleLabel(g.name),
-              os: g.type === 'lxc' ? 'Debian' : 'Ubuntu',
-              status: g.status,
-              cpu: Math.round(g.cpu * 100),
-              ram: formatBytes(g.mem),
-              maxram: formatBytes(g.maxmem),
-              bandwidth_up: '↑ 12Mb/s',
-              bandwidth_val: formatBytes(g.mem > 0 ? g.mem * 0.01 : 0),
-              services: detail.services || [],
-              disk_mounts: detail.disk_mounts || [],
-            };
-          });
-        }
-
-        if (p.type === 'lxc_detail') {
-          for (const lxc of p.lxc || []) {
-            detailMap[lxc.vmid] = { services: lxc.services || [], disk_mounts: lxc.disk_mounts || [] };
+          if (p.type === 'lxc_detail') {
+            for (const lxc of p.lxc || []) {
+              detailMap[lxc.vmid] = { services: lxc.services || [], disk_mounts: lxc.disk_mounts || [] };
+            }
+            refreshDetails();
           }
-          refreshDetails();
-        }
 
-        if (p.type === 'vm_detail') {
-          for (const vm of p.vms || []) {
-            detailMap[vm.vmid] = { services: vm.services || [], disk_mounts: vm.disk_mounts || [], agent: vm.agent, ssh: vm.ssh, ip: vm.ip };
+          if (p.type === 'vm_detail') {
+            for (const vm of p.vms || []) {
+              detailMap[vm.vmid] = { services: vm.services || [], disk_mounts: vm.disk_mounts || [], agent: vm.agent, ssh: vm.ssh, ip: vm.ip };
+            }
+            refreshDetails();
           }
-          refreshDetails();
-        }
 
-        if (p.type === 'haproxy_update') {
-          haproxyStats = p;
-        }
-      } catch {}
-    };
+          if (p.type === 'haproxy_update') {
+            haproxyStats = p;
+          }
+        } catch {}
+      };
+    }
+    
+    connect();
 
-    return () => ws.close();
+    return () => { clearTimeout(reconnectTimer); if(ws) ws.close(); };
   });
 
   function refreshDetails() {
@@ -184,7 +204,7 @@
     <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v1.2</span></div>
     <div class="header-actions">
       <div class="conn-status" class:conn-online={wsConnected}>
-        {wsConnected ? 'LIVE TELEMETRY' : 'RECONNECTING...'}
+        {wsConnected ? 'LIVE TELEMETRY' : reconnectAttempts > 0 ? `RECONNECTING... (attempt ${reconnectAttempts})` : 'CONNECTING...'}
       </div>
       <button class="neon-btn-sm" onclick={() => showSettings = true}>⚙ WEBHOOK INTEGRATION</button>
     </div>

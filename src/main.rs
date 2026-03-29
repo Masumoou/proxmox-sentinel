@@ -30,6 +30,7 @@ mod cluster;
 mod collectors;
 mod config;
 mod exporter;
+mod intelligence;
 mod proxmox_api;
 mod storage;
 
@@ -169,9 +170,22 @@ async fn run(cfg: Config) -> Result<()> {
     tokio::spawn(async move {
         let mut dispatcher = AlertDispatcher::new(alert_cfg, Some(alert_store));
         while let Some(log_alert) = alert_rx.recv().await {
-            dispatcher
-                .dispatch(Alert::LogPattern(log_alert))
-                .await;
+            let lower_line = log_alert.line.to_lowercase();
+            if lower_line.contains("out of memory: killed process") {
+                let process = log_alert.line.split("process")
+                    .nth(1)
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("unknown")
+                    .to_string();
+                crate::exporter::prometheus::inc_oom_killer(&log_alert.source);
+                dispatcher.dispatch(Alert::OomKilled { node: log_alert.source.clone(), process }).await;
+            } else {
+                dispatcher
+                    .dispatch(Alert::LogPattern(log_alert))
+                    .await;
+            }
         }
     });
 
@@ -195,11 +209,11 @@ async fn run(cfg: Config) -> Result<()> {
         None
     };
 
-    // Metrics HTTP server (serves Prometheus, WebSockets, and optionally /api/v1/ingest)
     let metrics_server = prom::MetricsServer::new(
         &cfg.metrics.listen_addr,
         cfg.metrics.listen_port,
         ws_tx.clone(),
+        Some(storage.clone()),
         hub_state,
         cfg.metrics.auth.clone(),
     );
@@ -239,6 +253,7 @@ async fn run(cfg: Config) -> Result<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(api_secs));
             let mut dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+            let mut vm_last_node: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
 
             loop {
                 ticker.tick().await;
@@ -306,6 +321,27 @@ async fn run(cfg: Config) -> Result<()> {
                                 for a in dispatcher.check_guest(guest) {
                                     dispatcher.dispatch(a).await;
                                 }
+
+                                if let Some(old) = vm_last_node.get(&guest.vmid) {
+                                    if old != &guest.node {
+                                        dispatcher.dispatch(Alert::MigrationDetected {
+                                            vmid: guest.vmid,
+                                            name: guest.name.clone(),
+                                            from_node: old.clone(),
+                                            to_node: guest.node.clone(),
+                                        }).await;
+                                        
+                                        let _ = ws_tx.send(json!({
+                                            "type": "vm_migrated",
+                                            "vmid": guest.vmid,
+                                            "name": guest.name,
+                                            "from": old,
+                                            "to": guest.node,
+                                            "timestamp": chrono::Utc::now().to_rfc3339()
+                                        }).to_string());
+                                    }
+                                }
+                                vm_last_node.insert(guest.vmid, guest.node.clone());
                             }
                         }
                         Err(e) => warn!("Guest list {node}: {e}"),
@@ -453,6 +489,12 @@ async fn run(cfg: Config) -> Result<()> {
                                     .await
                                     .ok();
                             }
+                            for log_path in &cfg_inner.logs.watch_paths {
+                                log_collector
+                                    .watch_lxc_log(guest.vmid, log_path)
+                                    .await
+                                    .ok();
+                            }
                             watched_lxcs.insert(guest.vmid);
                         }
                     }
@@ -475,9 +517,12 @@ async fn run(cfg: Config) -> Result<()> {
         let nodes = nodes.clone();
         let cfg_inner = cfg.clone();
         let ws_tx = ws_tx.clone();
+        let storage = storage.clone();
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(vm_secs));
+            let mut conn_failures: std::collections::HashMap<u32, u8> = std::collections::HashMap::new();
+            let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
 
             loop {
                 ticker.tick().await;
@@ -501,6 +546,20 @@ async fn run(cfg: Config) -> Result<()> {
                         let vm_stats = vm_collector
                             .collect(node, guest.vmid, &guest.name)
                             .await;
+
+                        if !vm_stats.agent_available && !vm_stats.ssh_available {
+                            let count = conn_failures.entry(guest.vmid).or_insert(0);
+                            *count += 1;
+                            if *count >= 5 {
+                                dispatcher.dispatch(Alert::VmConnectionLost { 
+                                    vmid: guest.vmid, 
+                                    name: guest.name.clone(), 
+                                    node: node.clone() 
+                                }).await;
+                            }
+                        } else {
+                            conn_failures.insert(guest.vmid, 0);
+                        }
 
                         let svcs: Vec<serde_json::Value> = vm_stats.services.iter().map(|s| {
                             json!({
@@ -650,6 +709,35 @@ async fn run(cfg: Config) -> Result<()> {
                 Err(e) => error!("Failed to init HAProxy collector: {e}"),
             }
         }
+    }
+
+    // ── Task 5: Database and Storage Health ───────────────────────────────
+    for pg_cfg in &cfg.postgres {
+        if pg_cfg.enabled {
+            let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+            tokio::spawn(crate::collectors::postgres::run_collector(pg_cfg.clone(), dispatcher));
+        }
+    }
+    for redis_cfg in &cfg.redis {
+        if redis_cfg.enabled {
+            let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+            tokio::spawn(crate::collectors::redis::run_collector(redis_cfg.clone(), dispatcher));
+        }
+    }
+    for os_cfg in &cfg.object_storage {
+        if os_cfg.enabled {
+            let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+            tokio::spawn(crate::collectors::object_storage::run_collector(os_cfg.clone(), dispatcher));
+        }
+    }
+    if cfg.file_activity.enabled {
+        tokio::spawn(crate::collectors::file_activity::run_collector(cfg.file_activity.clone(), ws_tx.clone()));
+    }
+    
+    // ── Task 6: Node Pressure Analyzer ────────────────────────────────────
+    if cfg.intelligence.enabled {
+        let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+        tokio::spawn(crate::intelligence::run_analyzer(cfg.intelligence.clone(), client.clone(), dispatcher));
     }
 
     // ── Wait for shutdown signals ─────────────────────────────────────────

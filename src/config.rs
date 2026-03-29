@@ -27,6 +27,16 @@ pub struct Config {
     pub cluster: ClusterConfig,
     #[serde(default)]
     pub services: ServicesConfig,
+    #[serde(default)]
+    pub postgres: Vec<PostgresConfig>,
+    #[serde(default)]
+    pub redis: Vec<RedisConfig>,
+    #[serde(default)]
+    pub object_storage: Vec<ObjectStorageConfig>,
+    #[serde(default)]
+    pub intelligence: IntelligenceConfig,
+    #[serde(default)]
+    pub file_activity: FileActivityConfig,
 }
 
 impl Config {
@@ -40,6 +50,27 @@ impl Config {
 
     pub fn write_example() {
         print!("{}", include_str!("../config.toml.example"));
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.alerts.memory_threshold <= 0.0 || self.alerts.memory_threshold > 100.0 {
+            anyhow::bail!("memory_threshold must be between 0 and 100");
+        }
+        if self.alerts.cpu_threshold <= 0.0 || self.alerts.cpu_threshold > 100.0 {
+            anyhow::bail!("cpu_threshold must be between 0 and 100");
+        }
+        if self.alerts.disk_threshold <= 0.0 || self.alerts.disk_threshold > 100.0 {
+            anyhow::bail!("disk_threshold must be between 0 and 100");
+        }
+        if self.intelligence.enabled {
+            if self.intelligence.critical_mem_pct <= 0.0 || self.intelligence.critical_mem_pct > 100.0 {
+                anyhow::bail!("intelligence.critical_mem_pct must be between 0 and 100");
+            }
+            if self.intelligence.target_free_mem_pct <= 0.0 || self.intelligence.target_free_mem_pct > 100.0 {
+                anyhow::bail!("intelligence.target_free_mem_pct must be between 0 and 100");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -331,5 +362,149 @@ pub struct VmServiceChecks {
     pub ip: String,
     pub user: Option<String>,
     pub checks: Vec<String>,
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Postgres Config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PostgresConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub name: String,
+    #[serde(default)]
+    pub url: String, // postgres://user:pass@localhost:5432/db
+    #[serde(default)]
+    pub interval_secs: u64,
+}
+
+impl Default for PostgresConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            name: "default".to_string(),
+            url: "postgres://postgres:postgres@localhost:5432/postgres".to_string(),
+            interval_secs: 60,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Redis Config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedisConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub name: String,
+    #[serde(default)]
+    pub url: String, // redis://127.0.0.1:6379/
+    #[serde(default)]
+    pub interval_secs: u64,
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            name: "default".to_string(),
+            url: "redis://127.0.0.1:6379/".to_string(),
+            interval_secs: 60,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Object Storage Config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObjectStorageConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub name: String,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub access_key: String,
+    #[serde(default)]
+    pub secret_key: String,
+    #[serde(default)]
+    pub interval_secs: u64,
+}
+
+impl Default for ObjectStorageConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            name: "default".to_string(),
+            endpoint: "".to_string(),
+            bucket: "".to_string(),
+            access_key: "".to_string(),
+            secret_key: "".to_string(),
+            interval_secs: 60,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Intelligence Config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IntelligenceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_critical_mem_pct")]
+    pub critical_mem_pct: f64,
+    #[serde(default = "default_target_free_mem_pct")]
+    pub target_free_mem_pct: f64,
+}
+
+impl Default for IntelligenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            critical_mem_pct: default_critical_mem_pct(),
+            target_free_mem_pct: default_target_free_mem_pct(),
+        }
+    }
+}
+
+fn default_critical_mem_pct() -> f64 { 95.0 }
+fn default_target_free_mem_pct() -> f64 { 30.0 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// File Activity Config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileActivityConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub watch_paths: Vec<String>,
+    #[serde(default = "default_activity_regex")]
+    pub access_log_regex: String,
+}
+
+impl Default for FileActivityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            watch_paths: vec![],
+            access_log_regex: default_activity_regex(),
+        }
+    }
+}
+
+fn default_activity_regex() -> String {
+    // Basic regex for common access log format extracting size (usually 10th group, but we can just provide a simple one, or user can override)
+    // format: `remote_addr - remote_user [time_local] "request" status body_bytes_sent "http_referer" "http_user_agent"`
+    r#"^(?P<ip>\S+)\s+\S+\s+(?P<user>\S+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>\S+)\s+(?P<path>\S+)\s+(?P<protocol>[^"]+)"\s+(?P<status>\d+)\s+(?P<size>\d+)"#.to_string()
 }
 

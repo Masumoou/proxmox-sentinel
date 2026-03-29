@@ -140,6 +140,14 @@ static GUEST_DISK_READ: Lazy<GaugeVec> = Lazy::new(|| {
     ).unwrap()
 });
 
+static OOM_KILL_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "pve_oom_kill_total",
+        "Total number of OOM Killer events detected",
+        &["node"]
+    ).unwrap()
+});
+
 static GUEST_DISK_WRITE: Lazy<GaugeVec> = Lazy::new(|| {
     register_gauge_vec!(
         "pve_guest_disk_write_bytes_total",
@@ -304,9 +312,89 @@ static HAPROXY_DOWNTIME: Lazy<GaugeVec> = Lazy::new(|| {
     ).unwrap()
 });
 
+// Database & Storage metrics
+static POSTGRES_UP: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_postgres_up",
+        "Postgres connection status (1 = up, 0 = down)",
+        &["name"]
+    ).unwrap()
+});
+
+static POSTGRES_CONNECTIONS: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_postgres_connections_total",
+        "Total number of active connections",
+        &["name"]
+    ).unwrap()
+});
+
+static POSTGRES_LATENCY_MS: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_postgres_avg_query_latency_ms",
+        "Average query latency in milliseconds",
+        &["name"]
+    ).unwrap()
+});
+
+static REDIS_UP: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_redis_up",
+        "Redis connection status (1 = up, 0 = down)",
+        &["name"]
+    ).unwrap()
+});
+
+static REDIS_MEMORY: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_redis_memory_used_bytes",
+        "Redis memory usage in bytes",
+        &["name"]
+    ).unwrap()
+});
+
+static OBJECT_STORAGE_UP: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_object_storage_up",
+        "Object storage health (1 = healthy, 0 = down)",
+        &["name"]
+    ).unwrap()
+});
+
+static OBJECT_STORAGE_LATENCY_MS: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_object_storage_latency_ms",
+        "Object storage request latency in ms",
+        &["name"]
+    ).unwrap()
+});
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Metric update functions
 // ──────────────────────────────────────────────────────────────────────────────
+
+pub fn inc_oom_killer(node: &str) {
+    OOM_KILL_TOTAL.with_label_values(&[node]).inc();
+}
+
+pub fn update_postgres(name: &str, up: bool, conns: i64, latency_ms: f64) {
+    let status = if up { 1.0 } else { 0.0 };
+    POSTGRES_UP.with_label_values(&[name]).set(status);
+    POSTGRES_CONNECTIONS.with_label_values(&[name]).set(conns as f64);
+    POSTGRES_LATENCY_MS.with_label_values(&[name]).set(latency_ms);
+}
+
+pub fn update_redis(name: &str, up: bool, mem_bytes: i64) {
+    let status = if up { 1.0 } else { 0.0 };
+    REDIS_UP.with_label_values(&[name]).set(status);
+    REDIS_MEMORY.with_label_values(&[name]).set(mem_bytes as f64);
+}
+
+pub fn update_object_storage(name: &str, up: bool, latency_ms: f64) {
+    let status = if up { 1.0 } else { 0.0 };
+    OBJECT_STORAGE_UP.with_label_values(&[name]).set(status);
+    OBJECT_STORAGE_LATENCY_MS.with_label_values(&[name]).set(latency_ms);
+}
 
 pub fn update_node(n: &NodeStatus) {
     let nd = &n.node;
@@ -391,33 +479,38 @@ pub struct MetricsServer {
     pub tx: broadcast::Sender<String>,
     pub hub_state: Option<crate::cluster::HubState>,
     pub auth: Option<String>,
+    pub storage: Option<std::sync::Arc<crate::storage::Storage>>,
 }
 
 #[derive(Clone)]
 struct AppState {
     tx: broadcast::Sender<String>,
     expected_auth: Option<String>, // "Basic <base64>"
+    storage: Option<std::sync::Arc<crate::storage::Storage>>,
 }
 
 impl MetricsServer {
-    pub fn new(addr: &str, port: u16, tx: broadcast::Sender<String>, hub_state: Option<crate::cluster::HubState>, auth: Option<String>) -> Self {
+    pub fn new(addr: &str, port: u16, tx: broadcast::Sender<String>, storage: Option<std::sync::Arc<crate::storage::Storage>>, hub_state: Option<crate::cluster::HubState>, auth: Option<String>) -> Self {
         Self {
             addr: format!("{}:{}", addr, port),
             tx,
             hub_state,
             auth,
+            storage,
         }
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let expected_auth = self.auth.map(|a| format!("Basic {}", BASE64_STANDARD.encode(a)));
-        let state = AppState { tx: self.tx, expected_auth };
+        let state = AppState { tx: self.tx, expected_auth, storage: self.storage };
 
         let mut app = Router::new()
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/api/status", get(status_handler))
             .route("/api/v1/alerts/test", post(test_alert_handler))
+            .route("/api/v1/alerts/recent", get(recent_alerts_handler))
+            .route("/api/v1/history/node/:node/metrics", get(node_history_handler))
             .route("/ws", get(ws_handler))
             .fallback(static_handler)
             .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
@@ -473,6 +566,31 @@ async fn metrics_handler() -> impl IntoResponse {
 
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "OK")
+}
+
+async fn recent_alerts_handler(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(ref storage) = state.storage {
+        match storage.query_recent_alerts(50) {
+            Ok(alerts) => (StatusCode::OK, Json(serde_json::json!(alerts))).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "No storage configured").into_response()
+    }
+}
+
+async fn node_history_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(node): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    if let Some(ref storage) = state.storage {
+        match storage.query_node_history(&node, 60 * 24) { // Get last 24h by default, or could take query params
+            Ok(history) => (StatusCode::OK, Json(serde_json::json!(history))).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "No storage configured").into_response()
+    }
 }
 
 async fn status_handler() -> impl IntoResponse {
