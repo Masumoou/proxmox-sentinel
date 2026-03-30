@@ -122,6 +122,17 @@ impl Storage {
                 http_5xx     INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_haproxy_ts ON haproxy_metrics(ts);
+
+            -- Application metrics snapshots
+            CREATE TABLE IF NOT EXISTS app_metrics (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts         TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                app_name   TEXT    NOT NULL,
+                metric     TEXT    NOT NULL,
+                value      REAL    NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_app_metrics_ts ON app_metrics(ts);
+            CREATE INDEX IF NOT EXISTS idx_app_metrics_app ON app_metrics(app_name);
             "
         ).context("Creating database tables")?;
         Ok(())
@@ -208,6 +219,15 @@ impl Storage {
         Ok(())
     }
 
+    pub fn insert_app_metric(&self, app_name: &str, metric: &str, value: f64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO app_metrics (app_name, metric, value) VALUES (?1, ?2, ?3)",
+            params![app_name, metric, value],
+        )?;
+        Ok(())
+    }
+
     // ── Query functions ──────────────────────────────────────────────────────
 
     /// Get node metrics for the last N hours
@@ -264,6 +284,34 @@ impl Storage {
                 "severity": row.get::<_, String>(2)?,
                 "summary": row.get::<_, String>(3)?,
                 "resolved": row.get::<_, bool>(4)?
+            }))
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn query_app_history(
+        &self,
+        app_name: &str,
+        metric: &str,
+        minutes: u32,
+    ) -> Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT ts, value FROM app_metrics
+             WHERE app_name = ?1 AND metric = ?2
+               AND ts > datetime('now', '-' || ?3 || ' minutes')
+             ORDER BY ts ASC"
+        )?;
+
+        let rows = stmt.query_map(params![app_name, metric, minutes], |row| {
+            Ok(serde_json::json!({
+                "ts": row.get::<_, String>(0)?,
+                "value": row.get::<_, f64>(1)?
             }))
         })?;
 

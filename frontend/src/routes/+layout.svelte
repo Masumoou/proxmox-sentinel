@@ -41,6 +41,12 @@
       <a href="/haproxy" class="nav-item" class:nav-active={currentPath === '/haproxy'}>
         <span class="nav-icon">◓</span> HAPROXY
       </a>
+      <a href="/file-activity" class="nav-item" class:nav-active={currentPath === '/file-activity'}>
+        <span class="nav-icon">◈</span> FILE ACTIVITY
+      </a>
+      <a href="/app-overview" class="nav-item" class:nav-active={currentPath === '/app-overview'}>
+        <span class="nav-icon">◐</span> APP OVERVIEW
+      </a>
     </nav>
   </aside>
 

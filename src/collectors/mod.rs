@@ -6,3 +6,5 @@ pub mod postgres;
 pub mod redis;
 pub mod object_storage;
 pub mod file_activity;
+pub mod app_metrics;
+pub mod app_logs;

@@ -740,6 +740,28 @@ async fn run(cfg: Config) -> Result<()> {
         tokio::spawn(crate::intelligence::run_analyzer(cfg.intelligence.clone(), client.clone(), dispatcher));
     }
 
+    // ── Task 7: Application Metrics ───────────────────────────────────────
+    for app_cfg in cfg.app_metrics.iter().filter(|c| c.enabled) {
+        let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+        let ws_tx_clone = ws_tx.clone();
+        let storage_clone = storage.clone();
+        let cfg_clone = app_cfg.clone();
+        tokio::spawn(crate::collectors::app_metrics::run_collector(
+            cfg_clone, storage_clone, dispatcher, ws_tx_clone
+        ));
+    }
+
+    // ── Task 8: Application Logs ──────────────────────────────────────────
+    for log_cfg in cfg.app_logs.iter().filter(|c| c.enabled) {
+        let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+        let ws_tx_clone = ws_tx.clone();
+        let full_cfg_clone = Arc::new(cfg.clone());
+        let cfg_clone = log_cfg.clone();
+        tokio::spawn(crate::collectors::app_logs::run_collector(
+            cfg_clone, full_cfg_clone, dispatcher, ws_tx_clone
+        ));
+    }
+
     // ── Wait for shutdown signals ─────────────────────────────────────────
     info!("All collectors running. Waiting for events.");
 

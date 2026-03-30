@@ -24,7 +24,10 @@ pub async fn run_collector(cfg: RedisConfig, mut dispatcher: AlertDispatcher) {
             Ok(client) => match client.get_multiplexed_async_connection().await {
                 Ok(mut con) => {
                     // Try to get INFO memory
-                    let info: redis::RedisResult<String> = redis::cmd("INFO").arg("memory").query_async(&mut con).await;
+                    let info: redis::RedisResult<String> = redis::cmd("INFO")
+                        .arg("memory")
+                        .query_async::<_, String>(&mut con)
+                        .await;
                     match info {
                         Ok(text) => {
                             let mut mem_used = 0i64;

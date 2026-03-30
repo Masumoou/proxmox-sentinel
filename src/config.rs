@@ -37,6 +37,10 @@ pub struct Config {
     pub intelligence: IntelligenceConfig,
     #[serde(default)]
     pub file_activity: FileActivityConfig,
+    #[serde(default)]
+    pub app_metrics: Vec<AppMetricsConfig>,
+    #[serde(default)]
+    pub app_logs: Vec<AppLogsConfig>,
 }
 
 impl Config {
@@ -511,5 +515,77 @@ fn default_activity_regex() -> String {
     // Basic regex for common access log format extracting size (usually 10th group, but we can just provide a simple one, or user can override)
     // format: `remote_addr - remote_user [time_local] "request" status body_bytes_sent "http_referer" "http_user_agent"`
     r#"^(?P<ip>\S+)\s+\S+\s+(?P<user>\S+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>\S+)\s+(?P<path>\S+)\s+(?P<protocol>[^"]+)"\s+(?P<status>\d+)\s+(?P<size>\d+)"#.to_string()
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// App Metrics Config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AppMetricsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub name: String,                    // display name, e.g. "nextcloud"
+    pub kind: String,                    // "nextcloud_occ" | "http_json" | "shell_json"
+    pub target_vmid: Option<u32>,        // LXC/VM vmid to exec into (for occ/shell)
+    pub command: Option<String>,         // shell command to run inside the VM
+    pub endpoint_url: Option<String>,    // HTTP endpoint for http_json kind
+    pub json_path_mappings: Vec<AppMetricMapping>, // map JSON paths to metric names
+    #[serde(default = "default_app_interval")]
+    pub interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AppMetricMapping {
+    pub json_path: String,    // e.g. "ocs.data.activeUsers.last5minutes"
+    pub metric_name: String,  // e.g. "active_users_5min"
+    pub metric_type: String,  // "gauge" | "counter" | "info"
+    pub label: String,        // display label in UI
+    pub unit: String,         // "users" | "files" | "bytes" | "ms" | ""
+}
+
+impl Default for AppMetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            name: "app".to_string(),
+            kind: "nextcloud_occ".to_string(),
+            target_vmid: None,
+            command: None,
+            endpoint_url: None,
+            json_path_mappings: vec![],
+            interval_secs: 60,
+        }
+    }
+}
+
+fn default_app_interval() -> u64 { 60 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// App Logs Config
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AppLogsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub name: String,
+    pub log_file_path: String,     // host path or pct exec path
+    pub target_vmid: Option<u32>,  // if inside a container/VM
+    pub log_format: String,        // "nextcloud_json" | "nginx_combined" | "apache_combined"
+    pub slow_request_threshold_ms: u64,
+}
+
+impl Default for AppLogsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            name: "app".to_string(),
+            log_file_path: "".to_string(),
+            target_vmid: None,
+            log_format: "nextcloud_json".to_string(),
+            slow_request_threshold_ms: 1000,
+        }
+    }
 }
 

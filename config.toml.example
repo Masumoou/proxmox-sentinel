@@ -119,3 +119,22 @@ alert_retention_days  = 30
 mode          = "standalone"   # "standalone", "agent", or "server"
 server_url    = "http://127.0.0.1:9101" # Only used if mode="agent"
 shared_secret = "change_me"    # Pre-shared key for authenticating agents
+
+# ── Application Metrics (v0.2.0) ─────────────────────────────────────────────
+# Track internal application counters (PHP/Nextcloud/JSON APIs)
+# [[app_metrics]]
+# name      = "Nextcloud"
+# kind      = "nextcloud_occ"
+# vmid      = 100
+# interval  = 60
+# mappings  = [
+#   { json_path = "$.system.mem_free", label = "Free Mem", unit = "bytes" }
+# ]
+
+# ── Application Log Analysis (v0.2.0) ────────────────────────────────────────
+# Watch specific logs and parse as JSON or Combined Apache format
+# [[app_logs]]
+# name      = "Nginx Access"
+# kind      = "combined"
+# vmid      = 100
+# path      = "/var/log/nginx/access.log"

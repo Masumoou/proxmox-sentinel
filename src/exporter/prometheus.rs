@@ -313,6 +313,15 @@ static HAPROXY_DOWNTIME: Lazy<GaugeVec> = Lazy::new(|| {
     ).unwrap()
 });
 
+// Application specific metrics
+static APP_METRIC: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_app_metric",
+        "Generic application metric value",
+        &["app", "metric"]
+    ).unwrap()
+});
+
 // Database & Storage metrics
 static POSTGRES_UP: Lazy<GaugeVec> = Lazy::new(|| {
     register_gauge_vec!(
@@ -395,6 +404,10 @@ pub fn update_object_storage(name: &str, up: bool, latency_ms: f64) {
     let status = if up { 1.0 } else { 0.0 };
     OBJECT_STORAGE_UP.with_label_values(&[name]).set(status);
     OBJECT_STORAGE_LATENCY_MS.with_label_values(&[name]).set(latency_ms);
+}
+
+pub fn update_app_metrics(name: &str, metric: &str, value: f64) {
+    APP_METRIC.with_label_values(&[name, metric]).set(value);
 }
 
 pub fn update_node(n: &NodeStatus) {
@@ -513,6 +526,7 @@ impl MetricsServer {
             .route("/api/v1/alerts/test", post(test_alert_handler))
             .route("/api/v1/alerts/recent", get(recent_alerts_handler))
             .route("/api/v1/history/node/:node/metrics", get(node_history_handler))
+            .route("/api/v1/apps/:name/history", get(app_history_handler))
             .route("/ws", get(ws_handler))
             .fallback(static_handler)
             .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
@@ -587,6 +601,24 @@ async fn node_history_handler(
 ) -> impl IntoResponse {
     if let Some(ref storage) = state.storage {
         match storage.query_node_history(&node, 60 * 24) { // Get last 24h by default, or could take query params
+            Ok(history) => (StatusCode::OK, Json(serde_json::json!(history))).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "No storage configured").into_response()
+    }
+}
+
+async fn app_history_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let metric = params.get("metric").cloned().unwrap_or_else(|| "active_users".to_string());
+    let minutes = params.get("minutes").and_then(|m| m.parse::<u32>().ok()).unwrap_or(60);
+
+    if let Some(ref storage) = state.storage {
+        match storage.query_app_history(&name, &metric, minutes) {
             Ok(history) => (StatusCode::OK, Json(serde_json::json!(history))).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }

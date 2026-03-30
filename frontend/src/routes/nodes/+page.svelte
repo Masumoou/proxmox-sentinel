@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import NodeSparkline from './NodeSparkline.svelte';
 
   let nodes = $state<any[]>([]);
   let wsConnected = $state(false);
@@ -48,7 +49,7 @@
     </div>
   {:else}
     <div class="node-list">
-      {#each nodes as node}
+      {#each nodes as node (node.node)}
         <div class="glass-panel node-card">
           <div class="node-header">
             <div>
@@ -72,6 +73,22 @@
             </div>
             <div class="bar"><div class="bar-fill" style="width: {node.mem_pct}%; background: var(--accent-pink);"></div></div>
             <div class="metric-detail">{node.mem_used_fmt} / {node.mem_total_fmt}</div>
+
+            <!-- Sparkline Chart -->
+            <div class="sparkline-container mt-6 pt-4 border-t border-white/5">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-[9px] font-bold text-zinc-500 tracking-widest uppercase">24H PERFORMANCE</span>
+                <div class="flex gap-3">
+                   <span class="flex items-center gap-1 text-[8px] font-bold text-cyan-400">
+                     <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> CPU
+                   </span>
+                   <span class="flex items-center gap-1 text-[8px] font-bold text-pink-400">
+                     <span class="w-1.5 h-1.5 rounded-full bg-pink-400"></span> RAM
+                   </span>
+                </div>
+              </div>
+              <NodeSparkline nodeName={node.node} />
+            </div>
           </div>
         </div>
       {/each}
@@ -152,6 +169,7 @@
   }
 
   .text-neon-pink { color: #ff6ec7; text-shadow: 0 0 8px rgba(255,110,199,0.4); }
+  .text-neon-blue { color: #00d2ff; text-shadow: 0 0 8px rgba(0,210,255,0.4); }
 
   .empty-state {
     padding: 60px;
@@ -172,4 +190,20 @@
     0%, 100% { opacity: 0.3; transform: scale(0.8); }
     50% { opacity: 1; transform: scale(1.2); }
   }
+
+  .mt-6 { margin-top: 24px; }
+  .pt-4 { padding-top: 16px; }
+  .border-t { border-top-width: 1px; }
+  .border-white\/5 { border-color: rgba(255, 255, 255, 0.05); }
+  .flex { display: flex; }
+  .items-center { align-items: center; }
+  .justify-between { justify-content: space-between; }
+  .mb-2 { margin-bottom: 8px; }
+  .gap-1 { gap: 4px; }
+  .gap-3 { gap: 12px; }
+  .rounded-full { border-radius: 9999px; }
+  .w-1\.5 { width: 6px; }
+  .h-1\.5 { height: 6px; }
+  .bg-cyan-400 { background-color: #22d3ee; }
+  .bg-pink-400 { background-color: #f472b6; }
 </style>

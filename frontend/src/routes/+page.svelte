@@ -16,6 +16,15 @@
   let showSettings = $state(false);
   let webhookTestUrl = $state('');
   let testStatus = $state({type: 'idle', msg: ''});
+  let banners = $state<{id: string, type: string, msg: string, color: string}[]>([]);
+
+  function addBanner(type: string, msg: string, color: string) {
+    const id = Math.random().toString(36).substring(7);
+    banners = [...banners, {id, type, msg, color}];
+    setTimeout(() => {
+      banners = banners.filter(b => b.id !== id);
+    }, 8000);
+  }
 
   async function sendTestAlert() {
     if (!webhookTestUrl) return;
@@ -159,6 +168,14 @@
           if (p.type === 'haproxy_update') {
             haproxyStats = p;
           }
+
+          if (p.type === 'pressure_alert') {
+            addBanner('PRESSURE', `${p.node.toUpperCase()} CPU PRESSURE: ${p.cpu_pressure.toFixed(1)}%`, 'var(--accent-red)');
+          }
+
+          if (p.type === 'vm_migrated') {
+            addBanner('MIGRATION', `${p.name} MOVED: ${p.from_node} → ${p.to_node}`, 'var(--accent-blue)');
+          }
         } catch {}
       };
     }
@@ -200,8 +217,19 @@
 </script>
 
 <div class="dashboard-page">
+  <!-- Banners Layer -->
+  <div class="banner-container">
+    {#each banners as banner (banner.id)}
+      <div class="floating-banner" style="border-color: {banner.color}; box-shadow: 0 0 20px {banner.color}44;">
+        <div class="banner-tag" style="background: {banner.color}">{banner.type}</div>
+        <div class="banner-msg">{banner.msg}</div>
+        <button class="banner-close" onclick={() => banners = banners.filter(b => b.id !== banner.id)}>×</button>
+      </div>
+    {/each}
+  </div>
+
   <div class="dash-header">
-    <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v1.2</span></div>
+    <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v0.2.0</span></div>
     <div class="header-actions">
       <div class="conn-status" class:conn-online={wsConnected}>
         {wsConnected ? 'LIVE TELEMETRY' : reconnectAttempts > 0 ? `RECONNECTING... (attempt ${reconnectAttempts})` : 'CONNECTING...'}
@@ -467,6 +495,60 @@
 {/if}
 
 <style>
+  /* Banners */
+  .banner-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: none;
+  }
+
+  .floating-banner {
+    pointer-events: auto;
+    background: rgba(13, 13, 26, 0.95);
+    border: 1px solid;
+    border-radius: 8px;
+    padding: 12px 16px;
+    min-width: 300px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: slideIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+    backdrop-filter: blur(8px);
+  }
+
+  .banner-tag {
+    font-size: 0.6rem;
+    font-weight: 900;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #000;
+  }
+
+  .banner-msg {
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  .banner-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(50px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
   .dashboard-page {
     display: flex;
     flex-direction: column;

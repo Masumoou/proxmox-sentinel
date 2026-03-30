@@ -47,6 +47,11 @@ pub enum Alert {
     NodePressureCritical { node: String, mem_pct: f64, suggest_vmid: Option<u32>, target_node: Option<String> },
     VmConnectionLost { vmid: u32, name: String, node: String },
     OomKilled { node: String, process: String },
+    AppDown { name: String },
+    AppHighErrorRate { name: String, error_rate: f64 },
+    AppAuthFailures { name: String, count: u64 },
+    AppStorageFull { name: String, usage_pct: f64 },
+    AppVersionMismatch { name: String, expected: String, found: String },
     Test { message: String },
 }
 
@@ -71,6 +76,11 @@ impl Alert {
             Alert::NodePressureCritical { node, .. } => format!("node_pressure:{node}"),
             Alert::VmConnectionLost { vmid, .. } => format!("vm_conn_lost:{vmid}"),
             Alert::OomKilled { node, process } => format!("oom_killed:{node}:{process}"),
+            Alert::AppDown { name } => format!("app_down:{name}"),
+            Alert::AppHighErrorRate { name, .. } => format!("app_errors:{name}"),
+            Alert::AppAuthFailures { name, .. } => format!("app_auth:{name}"),
+            Alert::AppStorageFull { name, .. } => format!("app_storage:{name}"),
+            Alert::AppVersionMismatch { name, .. } => format!("app_version:{name}"),
             Alert::Test { .. } => format!("test_alert:{}", chrono::Utc::now().timestamp()),
         }
     }
@@ -85,6 +95,9 @@ impl Alert {
             | Alert::RedisDown { .. }
             | Alert::S3Degraded { .. }
             | Alert::NodePressureCritical { .. }
+            | Alert::AppDown { .. }
+            | Alert::AppHighErrorRate { .. }
+            | Alert::AppStorageFull { .. }
             | Alert::OomKilled { .. } => "critical",
             Alert::VmConnectionLost { .. } => "warning",
             Alert::MigrationDetected { .. } => "info",
@@ -146,6 +159,16 @@ impl Alert {
                 format!("VM {name} ({vmid}) on {node} lost connection (agent/ssh)"),
             Alert::OomKilled { node, process } =>
                 format!("OOM Killer triggered on {node} for process '{process}'"),
+            Alert::AppDown { name } =>
+                format!("Application {name} is DOWN or unreachable"),
+            Alert::AppHighErrorRate { name, error_rate } =>
+                format!("Application {name} high error rate: {error_rate:.1}/min"),
+            Alert::AppAuthFailures { name, count } =>
+                format!("Application {name} detected {count} authentication failures in the last minute"),
+            Alert::AppStorageFull { name, usage_pct } =>
+                format!("Application {name} storage nearly full: {usage_pct:.1}%"),
+            Alert::AppVersionMismatch { name, expected, found } =>
+                format!("Application {name} version mismatch: expected {expected}, found {found}"),
             Alert::Test { message } =>
                 format!("SENTINEL TEST ALERT: {message}"),
         }
