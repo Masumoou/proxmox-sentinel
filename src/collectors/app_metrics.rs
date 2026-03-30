@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 pub async fn run_collector(
     cfg: AppMetricsConfig,

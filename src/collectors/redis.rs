@@ -26,7 +26,7 @@ pub async fn run_collector(cfg: RedisConfig, mut dispatcher: AlertDispatcher) {
                     // Try to get INFO memory
                     let info: redis::RedisResult<String> = redis::cmd("INFO")
                         .arg("memory")
-                        .query_async::<_, String>(&mut con)
+                        .query_async::<String>(&mut con)
                         .await;
                     match info {
                         Ok(text) => {

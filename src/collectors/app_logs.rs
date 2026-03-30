@@ -1,6 +1,6 @@
 // src/collectors/app_logs.rs
 
-use crate::alerts::{Alert, AlertDispatcher};
+use crate::alerts::AlertDispatcher;
 use crate::config::{AppLogsConfig, Config};
 use notify::{RecursiveMode, Watcher, RecommendedWatcher, Config as NotifyConfig, Event};
 use serde_json::Value;
@@ -11,13 +11,13 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use regex::Regex;
 
 pub async fn run_collector(
     cfg: AppLogsConfig,
     full_cfg: Arc<Config>,
-    mut dispatcher: AlertDispatcher,
+    _dispatcher: AlertDispatcher,
     ws_tx: broadcast::Sender<String>,
 ) {
     if !cfg.enabled {

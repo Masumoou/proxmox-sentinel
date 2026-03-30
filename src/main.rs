@@ -755,7 +755,7 @@ async fn run(cfg: Config) -> Result<()> {
     for log_cfg in cfg.app_logs.iter().filter(|c| c.enabled) {
         let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
         let ws_tx_clone = ws_tx.clone();
-        let full_cfg_clone = Arc::new(cfg.clone());
+        let full_cfg_clone = cfg.clone();
         let cfg_clone = log_cfg.clone();
         tokio::spawn(crate::collectors::app_logs::run_collector(
             cfg_clone, full_cfg_clone, dispatcher, ws_tx_clone
