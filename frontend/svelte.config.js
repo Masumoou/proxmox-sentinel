@@ -19,7 +19,13 @@ const config = {
 			fallback: 'index.html', // Essential for Single Page Apps
 			precompress: false,
 			strict: true
-		})
+		}),
+		prerender: {
+			handleHttpError: ({ path, referrer, message }) => {
+				if (path === '/favicon.png') return;
+				throw new Error(message);
+			}
+		}
 	}
 };
 
