@@ -50,7 +50,9 @@ pub enum Alert {
     AppDown { name: String },
     AppHighErrorRate { name: String, error_rate: f64 },
     AppAuthFailures { name: String, count: u64 },
+    #[allow(dead_code)]
     AppStorageFull { name: String, usage_pct: f64 },
+    #[allow(dead_code)]
     AppVersionMismatch { name: String, expected: String, found: String },
     Test { message: String },
 }

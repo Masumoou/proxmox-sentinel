@@ -539,6 +539,7 @@ pub struct AppMetricsConfig {
 pub struct AppMetricMapping {
     pub json_path: String,    // e.g. "ocs.data.activeUsers.last5minutes"
     pub metric_name: String,  // e.g. "active_users_5min"
+    #[allow(dead_code)]
     pub metric_type: String,  // "gauge" | "counter" | "info"
     pub label: String,        // display label in UI
     pub unit: String,         // "users" | "files" | "bytes" | "ms" | ""
@@ -571,8 +572,10 @@ pub struct AppLogsConfig {
     pub enabled: bool,
     pub name: String,
     pub log_file_path: String,     // host path or pct exec path
+    #[allow(dead_code)]
     pub target_vmid: Option<u32>,  // if inside a container/VM
     pub log_format: String,        // "nextcloud_json" | "nginx_combined" | "apache_combined"
+    #[allow(dead_code)]
     pub slow_request_threshold_ms: u64,
 }
 

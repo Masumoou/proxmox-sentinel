@@ -1,57 +1,39 @@
-// src/collectors/app_logs.rs
-
-use crate::alerts::AlertDispatcher;
+use crate::alerts::{Alert, AlertDispatcher};
 use crate::config::{AppLogsConfig, Config};
-use notify::{RecursiveMode, Watcher, RecommendedWatcher, Config as NotifyConfig, Event};
+use notify::{RecursiveMode, Watcher, RecommendedWatcher, Config as NotifyConfig};
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
-use tokio::time::{interval, Duration};
+use tokio::sync::{broadcast, mpsc};
+use tokio::time::Duration;
 use tracing::{info, warn};
 use regex::Regex;
 
 pub async fn run_collector(
     cfg: AppLogsConfig,
     full_cfg: Arc<Config>,
-    _dispatcher: AlertDispatcher,
+    mut dispatcher: AlertDispatcher,   // renamed, no underscore
     ws_tx: broadcast::Sender<String>,
 ) {
-    if !cfg.enabled {
-        return;
-    }
+    if !cfg.enabled { return; }
 
     info!("Starting App Logs collector: {} ({})", cfg.name, cfg.log_file_path);
-    
+
     let stats = Arc::new(Mutex::new(LogStats::new()));
-    let stats_clone = stats.clone();
-    let cfg_name = cfg.name.clone();
-    let ws_tx_stats = ws_tx.clone();
 
-    // Spawn 60s stats broadcaster
-    tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let current_stats = stats_clone.lock().unwrap().get_and_reset();
-            let event = serde_json::json!({
-                "type": "app_log_stats",
-                "app": cfg_name,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "requests_per_min": current_stats.0,
-                "errors_per_min": current_stats.1,
-                "auth_failures_per_min": current_stats.2
-            });
-            let _ = ws_tx_stats.send(event.to_string());
-        }
-    });
+    // Bridge notify (sync) → tokio async channel
+    let (notify_tx, mut notify_rx) = mpsc::channel::<notify::Result<notify::Event>>(32);
 
-    let (tx, rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
-    let mut watcher = RecommendedWatcher::new(tx, NotifyConfig::default()).expect("Failed to create watcher");
-    watcher.watch(Path::new(&cfg.log_file_path), RecursiveMode::NonRecursive).expect("Failed to watch log file");
+    let mut watcher = RecommendedWatcher::new(
+        move |res| { let _ = notify_tx.blocking_send(res); },
+        NotifyConfig::default()
+    ).expect("Failed to create watcher");
+
+    watcher.watch(Path::new(&cfg.log_file_path), RecursiveMode::NonRecursive)
+           .expect("Failed to watch log file");
 
     let mut last_offset = match File::open(&cfg.log_file_path) {
         Ok(f) => f.metadata().unwrap().len(),
@@ -59,12 +41,42 @@ pub async fn run_collector(
     };
 
     let regex = Regex::new(&full_cfg.file_activity.access_log_regex).ok();
+    let mut stats_interval = tokio::time::interval(Duration::from_secs(60));
+    stats_interval.tick().await; // consume the immediate first tick
 
-    while let Ok(msg) = rx.recv() {
-        if let Ok(event) = msg {
-            if event.kind.is_modify() || event.kind.is_create() {
-                if let Err(e) = process_new_lines(&cfg, &mut last_offset, &stats, &ws_tx, &regex) {
-                    warn!("Failed to process log lines for {}: {}", cfg.name, e);
+    loop {
+        tokio::select! {
+            Some(Ok(event)) = notify_rx.recv() => {
+                if event.kind.is_modify() || event.kind.is_create() {
+                    if let Err(e) = process_new_lines(&cfg, &mut last_offset, &stats, &ws_tx, &regex) {
+                        warn!("Failed to process log lines for {}: {}", cfg.name, e);
+                    }
+                }
+            }
+            _ = stats_interval.tick() => {
+                let current_stats = stats.lock().unwrap().get_and_reset();
+                let event = serde_json::json!({
+                    "type": "app_log_stats",
+                    "app": cfg.name,
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "requests_per_min": current_stats.0,
+                    "errors_per_min": current_stats.1,
+                    "auth_failures_per_min": current_stats.2
+                });
+                let _ = ws_tx.send(event.to_string());
+
+                // Wire the alert dispatching HERE (dispatcher is in scope, not moved)
+                if current_stats.1 > 10 {
+                    dispatcher.dispatch(Alert::AppHighErrorRate {
+                        name: cfg.name.clone(),
+                        error_rate: current_stats.1 as f64,
+                    }).await;
+                }
+                if current_stats.2 > 5 {
+                    dispatcher.dispatch(Alert::AppAuthFailures {
+                        name: cfg.name.clone(),
+                        count: current_stats.2 as u64,
+                    }).await;
                 }
             }
         }
