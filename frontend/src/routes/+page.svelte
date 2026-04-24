@@ -233,7 +233,7 @@
   </div>
 
   <div class="dash-header">
-    <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v0.2.2</span></div>
+    <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v0.2.3</span></div>
     <div class="header-actions">
       <div class="conn-status" class:conn-online={wsConnected}>
         {wsConnected ? 'LIVE TELEMETRY' : reconnectAttempts > 0 ? `RECONNECTING... (attempt ${reconnectAttempts})` : 'CONNECTING...'}
