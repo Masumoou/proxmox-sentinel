@@ -1,144 +1,87 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { enrichedGuests, formatBytes, pct, wsConnected } from '$lib/store';
 
-  let guests = $state<any[]>([]);
-  let detailMap: Record<number, any> = {};
-  let wsConnected = $state(false);
-  let filter = $state('all'); // all | running | stopped | lxc | qemu
-
-  function formatBytes(bytes: number, decimals = 1) {
-    if (!+bytes) return '0 B';
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-  }
+  let filter = $state('all');
+  let query = $state('');
 
   let filteredGuests = $derived(
-    guests.filter(g => {
-      if (filter === 'running') return g.status === 'running';
-      if (filter === 'stopped') return g.status !== 'running';
-      if (filter === 'lxc') return g.type === 'LXC';
-      if (filter === 'qemu') return g.type === 'QEMU';
-      return true;
+    $enrichedGuests.filter((guest) => {
+      const matchesFilter =
+        filter === 'all' ||
+        (filter === 'running' && guest.status === 'running') ||
+        (filter === 'stopped' && guest.status !== 'running') ||
+        (filter === 'lxc' && guest.type === 'LXC') ||
+        (filter === 'qemu' && guest.type === 'QEMU');
+      const q = query.toLowerCase();
+      const matchesQuery = !q || `${guest.vmid} ${guest.name} ${guest.node} ${guest.ip || ''}`.toLowerCase().includes(q);
+      return matchesFilter && matchesQuery;
     })
   );
 
-  onMount(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    ws.onopen = () => { wsConnected = true; };
-    ws.onclose = () => { wsConnected = false; };
+  function serviceCount(guest: any) {
+    const up = guest.services.filter((service: any) => service.status === 'running').length;
+    return `${up}/${guest.services.length}`;
+  }
 
-    ws.onmessage = (e) => {
-      try {
-        const p = JSON.parse(e.data);
+  function visibility(guest: any) {
+    if (guest.type === 'LXC') return 'host';
+    if (guest.agent) return 'agent';
+    if (guest.ssh) return 'ssh';
+    return 'none';
+  }
 
-        if (p.type === 'cluster_update') {
-          const guestList = p.guests || [];
-          guests = guestList.map((g: any) => {
-            const detail = detailMap[g.vmid] || {};
-            return {
-              id: g.vmid, name: g.name, node: g.node,
-              type: g.type === 'lxc' ? 'LXC' : 'QEMU',
-              status: g.status,
-              cpu: (g.cpu * 100).toFixed(1),
-              ram: formatBytes(g.mem),
-              maxram: formatBytes(g.maxmem),
-              services: detail.services || [],
-              disk_mounts: detail.disk_mounts || [],
-            };
-          });
-        }
-
-        if (p.type === 'lxc_detail') {
-          for (const lxc of p.lxc || []) {
-            detailMap[lxc.vmid] = { services: lxc.services || [], disk_mounts: lxc.disk_mounts || [] };
-          }
-          refreshDetails();
-        }
-
-        if (p.type === 'vm_detail') {
-          for (const vm of p.vms || []) {
-            detailMap[vm.vmid] = { services: vm.services || [], disk_mounts: vm.disk_mounts || [], agent: vm.agent, ssh: vm.ssh, ip: vm.ip };
-          }
-          refreshDetails();
-        }
-      } catch {}
-    };
-
-    return () => ws.close();
-  });
-
-  function refreshDetails() {
-    guests = guests.map(g => {
-      const detail = detailMap[g.id] || {};
-      return { ...g, services: detail.services || g.services, disk_mounts: detail.disk_mounts || g.disk_mounts };
-    });
+  function osLabel(guest: any) {
+    if (guest.os_name && guest.os_version) return `${guest.os_name} ${guest.os_version}`;
+    if (guest.os_name) return guest.os_name;
+    return 'unknown';
   }
 </script>
 
 <div class="guests-page">
   <div class="page-header">
-    <h2 class="page-title">GUEST MONITOR</h2>
-    <div class="filter-bar">
-      {#each ['all', 'running', 'stopped', 'lxc', 'qemu'] as f}
-        <button class="filter-btn" class:active={filter === f} onclick={() => filter = f}>
-          {f.toUpperCase()}
-        </button>
-      {/each}
+    <div>
+      <h2 class="page-title">GUEST MONITOR</h2>
+      <p class="page-subtitle">VMs and containers with cached live state</p>
+    </div>
+    <div class="controls">
+      <input bind:value={query} placeholder="Search ID, name, node, IP" />
+      <div class="filter-bar">
+        {#each ['all', 'running', 'stopped', 'lxc', 'qemu'] as f}
+          <button class:active={filter === f} onclick={() => filter = f}>{f.toUpperCase()}</button>
+        {/each}
+      </div>
     </div>
   </div>
 
   {#if filteredGuests.length === 0}
-    <div class="glass-panel empty-state">
-      <div class="pulse-dot"></div>
-      <p>{wsConnected ? 'NO GUESTS MATCH FILTER' : 'CONNECTING...'}</p>
-    </div>
+    <div class="empty">{ $wsConnected ? 'NO GUESTS MATCH FILTER' : 'CONNECTING...' }</div>
   {:else}
-    <div class="guest-table">
-      <div class="table-header">
-        <span class="col-id">ID</span>
-        <span class="col-name">NAME</span>
-        <span class="col-type">TYPE</span>
-        <span class="col-node">NODE</span>
-        <span class="col-status">STATUS</span>
-        <span class="col-cpu">CPU</span>
-        <span class="col-mem">MEMORY</span>
-        <span class="col-svc">SERVICES</span>
+    <div class="table">
+      <div class="table-head">
+        <span>ID</span><span>Name</span><span>Type</span><span>OS</span><span>Node</span><span>IP</span><span>Status</span><span>CPU</span><span>RAM</span><span>Services</span><span>Visibility</span>
       </div>
-
-      {#each filteredGuests as guest}
-        <div class="table-row" class:row-running={guest.status === 'running'} class:row-stopped={guest.status !== 'running'}>
-          <span class="col-id">{guest.id}</span>
-          <span class="col-name">{guest.name}</span>
-          <span class="col-type"><span class="type-badge">{guest.type}</span></span>
-          <span class="col-node">{guest.node || '—'}</span>
-          <span class="col-status">
-            <span class="status-indicator" class:si-up={guest.status === 'running'} class:si-down={guest.status !== 'running'}>
-              ● {guest.status.toUpperCase()}
-            </span>
-          </span>
-          <span class="col-cpu text-neon-blue">{guest.cpu}%</span>
-          <span class="col-mem">{guest.ram}</span>
-          <span class="col-svc">
-            <span style="color: var(--accent-green);">{guest.services.filter((s: any) => s.status === 'running').length}</span>
-            /
-            <span>{guest.services.length}</span>
-          </span>
+      {#each filteredGuests as guest (guest.vmid)}
+        <div class="row" class:stopped={guest.status !== 'running'}>
+          <span>{guest.vmid}</span>
+          <span class="name">{guest.name}</span>
+          <span><b>{guest.type}</b></span>
+          <span class="mono">{osLabel(guest)}</span>
+          <span>{guest.node}</span>
+          <span class="mono">{guest.ip || 'unknown'}</span>
+          <span class:ok={guest.status === 'running'} class:bad={guest.status !== 'running'}>{guest.status}</span>
+          <span>{(guest.cpu * 100).toFixed(1)}% <small>{guest.maxcpu ? `${guest.maxcpu} vCPU` : ''}</small></span>
+          <span>{formatBytes(guest.mem)} <small>{Math.round(pct(guest.mem, guest.maxmem))}%</small></span>
+          <span>{serviceCount(guest)}</span>
+          <span class:bad={visibility(guest) === 'none'}>{visibility(guest)}</span>
         </div>
-
-        <!-- Expandable service row -->
         {#if guest.services.length > 0}
           <div class="service-row">
-            {#each guest.services as svc}
-              <div class="service-tag">
-                <span class="status-dot {svc.status === 'running' ? 'status-running' : 'status-stopped'}"></span>
-                {svc.name}
-              </div>
+            {#each guest.services.slice(0, 16) as service}
+              <span class="service-chip" class:down={service.status !== 'running'}>{service.name}</span>
             {/each}
           </div>
+        {:else if guest.type === 'QEMU' && guest.status === 'running'}
+          <div class="hint-row">Install/enable QEMU Guest Agent or configure SSH to show services, disks, and reliable IPs for this VM.</div>
         {/if}
       {/each}
     </div>
@@ -146,96 +89,31 @@
 </div>
 
 <style>
-  .guests-page { display: flex; flex-direction: column; gap: 20px; }
-
-  .page-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
-
-  .page-title {
-    font-size: 0.85rem; letter-spacing: 3px;
-    color: var(--text-secondary); font-weight: 600;
-  }
-
+  .guests-page { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .page-title { font-size: 0.85rem; letter-spacing: 3px; color: var(--text-secondary); font-weight: 800; }
+  .page-subtitle { margin-top: 4px; color: var(--text-dim); font-size: 0.75rem; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  input { width: 260px; background: var(--panel-bg); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; padding: 8px 10px; }
   .filter-bar { display: flex; gap: 6px; }
-
-  .filter-btn {
-    padding: 5px 14px; border-radius: 6px;
-    border: 1px solid var(--border-color);
-    background: transparent; color: var(--text-secondary);
-    font-size: 0.65rem; font-weight: 600; letter-spacing: 1.5px;
-    cursor: pointer; transition: all 0.2s;
-  }
-
-  .filter-btn:hover { background: rgba(0, 210, 255, 0.06); color: var(--text-primary); }
-
-  .filter-btn.active {
-    background: rgba(0, 210, 255, 0.12);
-    color: var(--accent-blue);
-    border-color: rgba(0, 210, 255, 0.3);
-  }
-
-  /* ── Table ──────────────────────────────────────────────── */
-  .guest-table { display: flex; flex-direction: column; gap: 2px; }
-
-  .table-header, .table-row {
-    display: grid;
-    grid-template-columns: 60px 1.5fr 70px 1fr 100px 80px 100px 80px;
-    align-items: center;
-    padding: 10px 16px;
-    border-radius: 6px;
-    font-size: 0.78rem;
-  }
-
-  .table-header {
-    font-size: 0.6rem;
-    color: var(--text-secondary);
-    letter-spacing: 2px;
-    font-weight: 600;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-color);
-  }
-
-  .table-row {
-    background: var(--panel-bg);
-    border: 1px solid var(--border-color);
-    transition: all 0.15s;
-  }
-
-  .table-row:hover {
-    background: rgba(0, 210, 255, 0.04);
-    border-color: rgba(0, 210, 255, 0.15);
-  }
-
-  .row-stopped { opacity: 0.6; }
-
-  .type-badge {
-    font-size: 0.6rem; padding: 2px 8px; border-radius: 3px;
-    background: rgba(0, 210, 255, 0.12); color: var(--accent-blue);
-    letter-spacing: 1px;
-  }
-
-  .status-indicator { font-size: 0.7rem; font-weight: 600; letter-spacing: 1px; }
-  .si-up { color: var(--accent-green); }
-  .si-down { color: var(--accent-red); }
-
-  .service-row {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    padding: 6px 16px 10px 76px;
-    margin-top: -2px;
-  }
-
-  .empty-state {
-    padding: 60px; text-align: center;
-    color: var(--text-secondary); letter-spacing: 2px; font-size: 0.85rem;
-  }
-
-  .pulse-dot {
-    width: 12px; height: 12px; border-radius: 50%;
-    background: var(--accent-blue); margin: 0 auto 20px;
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 0.3; transform: scale(0.8); }
-    50% { opacity: 1; transform: scale(1.2); }
-  }
+  button { padding: 7px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: transparent; color: var(--text-secondary); font-size: 0.62rem; font-weight: 800; letter-spacing: 1.4px; cursor: pointer; }
+  button.active { color: var(--accent-cyan); background: rgba(0,212,255,0.1); }
+  .table { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); }
+  .table-head, .row { min-width: 1320px; display: grid; grid-template-columns: 70px 1.6fr 80px 170px 120px 150px 100px 90px 130px 90px 100px; gap: 12px; align-items: center; padding: 10px 14px; }
+  .table-head { color: var(--text-secondary); font-size: 0.6rem; letter-spacing: 2px; text-transform: uppercase; border-bottom: 1px solid var(--border-color); }
+  .row { min-height: 48px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.78rem; }
+  .row:hover { background: rgba(0,212,255,0.04); }
+  .row.stopped { opacity: 0.58; }
+  .name { color: var(--text-primary); font-weight: 800; overflow-wrap: anywhere; }
+  .mono { font-family: 'Courier New', monospace; color: var(--text-secondary); }
+  small { color: var(--text-dim); margin-left: 4px; }
+  b { color: var(--accent-cyan); font-size: 0.65rem; background: rgba(0,212,255,0.1); padding: 2px 6px; border-radius: 4px; }
+  .ok { color: var(--accent-green); }
+  .bad { color: var(--accent-red); }
+  .service-row, .hint-row { min-width: 1320px; padding: 8px 14px 10px 84px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .service-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .service-chip { font-size: 0.65rem; color: var(--accent-green); border: 1px solid rgba(0,255,136,0.18); background: rgba(0,255,136,0.08); border-radius: 4px; padding: 3px 7px; }
+  .service-chip.down { color: var(--accent-red); border-color: rgba(255,51,85,0.22); background: rgba(255,51,85,0.08); }
+  .hint-row { color: var(--text-secondary); font-size: 0.72rem; }
+  .empty { min-height: 360px; display: grid; place-items: center; color: var(--text-secondary); letter-spacing: 2px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); }
 </style>

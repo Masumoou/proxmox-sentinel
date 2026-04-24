@@ -268,6 +268,7 @@ async fn run(cfg: Config) -> Result<()> {
 
                 let mut ws_nodes = Vec::new();
                 let mut ws_guests = Vec::new();
+                let mut ws_storage = Vec::new();
 
                 for node in nodes.iter() {
                     // Node status
@@ -322,6 +323,7 @@ async fn run(cfg: Config) -> Result<()> {
                                     "type": match guest.kind { GuestKind::Vm => "qemu", GuestKind::Lxc => "lxc" },
                                     "status": guest.status,
                                     "cpu": guest.cpu_usage,
+                                    "maxcpu": guest.cpu_count,
                                     "mem": guest.mem_used,
                                     "maxmem": guest.mem_total
                                 }));
@@ -360,6 +362,17 @@ async fn run(cfg: Config) -> Result<()> {
                         Ok(storages) => {
                             for s in &storages {
                                 prom::update_storage(s);
+                                ws_storage.push(json!({
+                                    "storage": s.storage.clone(),
+                                    "node": s.node.clone(),
+                                    "type": s.kind.clone(),
+                                    "content": s.content.clone(),
+                                    "used": s.used,
+                                    "total": s.total,
+                                    "avail": s.avail,
+                                    "active": s.active,
+                                    "enabled": s.enabled
+                                }));
                                 if !s.active && s.enabled {
                                     dispatcher
                                         .dispatch(Alert::StorageUnavailable {
@@ -379,7 +392,8 @@ async fn run(cfg: Config) -> Result<()> {
                     "type": "cluster_update",
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                     "nodes": ws_nodes,
-                    "guests": ws_guests
+                    "guests": ws_guests,
+                    "storage": ws_storage
                 });
                 let _ = ws_tx.send(event.to_string());
             }
@@ -501,6 +515,8 @@ async fn run(cfg: Config) -> Result<()> {
                         lxc_details.push(json!({
                             "vmid": guest.vmid,
                             "name": guest.name,
+                            "os_name": stats.os_name.clone(),
+                            "os_version": stats.os_version.clone(),
                             "services": svcs,
                             "disk_mounts": disks,
                             "mem_current": stats.cgroup.mem_current,
@@ -665,6 +681,8 @@ async fn run(cfg: Config) -> Result<()> {
                         vm_details.push(json!({
                             "vmid": guest.vmid,
                             "name": guest.name,
+                            "os_name": vm_stats.os_name.clone(),
+                            "os_version": vm_stats.os_version.clone(),
                             "services": svcs,
                             "disk_mounts": disks,
                             "agent": vm_stats.agent_available,

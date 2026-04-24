@@ -51,6 +51,7 @@ pub struct GuestStatus {
     pub kind: GuestKind,         // VM or LXC
     pub status: String,          // "running" | "stopped" | "paused"
     pub cpu_usage: f64,          // 0.0 – 1.0
+    pub cpu_count: u32,
     pub mem_used: u64,
     pub mem_total: u64,
     pub disk_read: u64,          // bytes/s (cumulative from API)
@@ -157,6 +158,7 @@ struct RawGuest {
     name: Option<String>,
     status: String,
     cpu: Option<f64>,
+    maxcpu: Option<u32>,
     mem: Option<u64>,
     maxmem: Option<u64>,
     diskread: Option<u64>,
@@ -458,6 +460,7 @@ fn raw_to_guest(raw: RawGuest, kind: GuestKind, node: &str) -> GuestStatus {
         kind,
         status: raw.status,
         cpu_usage: raw.cpu.unwrap_or(0.0),
+        cpu_count: raw.maxcpu.unwrap_or(0),
         mem_used: raw.mem.unwrap_or(0),
         mem_total: raw.maxmem.unwrap_or(0),
         disk_read: raw.diskread.unwrap_or(0),

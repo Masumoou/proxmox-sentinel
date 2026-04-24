@@ -14,6 +14,7 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::path::Path;
 use std::time::Duration;
+use tokio::process::Command;
 use tracing::{debug, warn};
 
 use crate::config::SshConfig;
@@ -24,6 +25,8 @@ pub struct VmDetailedStats {
     pub vmid: u32,
     pub name: String,
     pub ip_address: Option<String>,
+    pub os_name: Option<String>,
+    pub os_version: Option<String>,
     pub services: Vec<VmService>,
     pub disk_mounts: Vec<VmDiskMount>,
     pub top_processes: Vec<VmProcess>,
@@ -71,6 +74,8 @@ impl<'a> VmCollector<'a> {
             vmid,
             name: name.to_string(),
             ip_address: None,
+            os_name: None,
+            os_version: None,
             services: vec![],
             disk_mounts: vec![],
             top_processes: vec![],
@@ -83,15 +88,21 @@ impl<'a> VmCollector<'a> {
             Ok(agent_data) => {
                 stats.agent_available = true;
                 stats.ip_address = agent_data.ip;
+                stats.os_name = agent_data.os_name;
+                stats.os_version = agent_data.os_version;
                 stats.services = agent_data.services;
                 stats.disk_mounts = agent_data.mounts;
                 stats.top_processes = agent_data.processes;
 
                 // If we have an IP, also try SSH for service status and logs
-                if let Some(ref ip) = stats.ip_address.clone() {
-                    match self.collect_via_ssh(ip).await {
+                if let Some(ip) = stats.ip_address.clone() {
+                    match self.collect_via_ssh(&ip).await {
                         Ok(ssh_data) => {
                             stats.ssh_available = true;
+                            if stats.os_name.is_none() {
+                                stats.os_name = ssh_data.os_name;
+                                stats.os_version = ssh_data.os_version;
+                            }
                             if !ssh_data.services.is_empty() {
                                 stats.services = ssh_data.services;
                             }
@@ -108,11 +119,38 @@ impl<'a> VmCollector<'a> {
                     match self.collect_via_ssh(&ip).await {
                         Ok(ssh_data) => {
                             stats.ssh_available = true;
+                            stats.os_name = ssh_data.os_name;
+                            stats.os_version = ssh_data.os_version;
                             stats.services = ssh_data.services;
                             stats.disk_mounts = ssh_data.mounts;
                         }
                         Err(e) => warn!("SSH fallback failed for vm {vmid}: {e}"),
                     }
+                }
+            }
+        }
+
+        if stats.ip_address.is_none() {
+            stats.ip_address = discover_ip_from_host(vmid).await;
+        }
+
+        if !stats.ssh_available {
+            if let Some(ip) = stats.ip_address.clone() {
+                match self.collect_via_ssh(&ip).await {
+                    Ok(ssh_data) => {
+                        stats.ssh_available = true;
+                        if stats.os_name.is_none() {
+                            stats.os_name = ssh_data.os_name;
+                            stats.os_version = ssh_data.os_version;
+                        }
+                        if stats.services.is_empty() {
+                            stats.services = ssh_data.services;
+                        }
+                        if stats.disk_mounts.is_empty() {
+                            stats.disk_mounts = ssh_data.mounts;
+                        }
+                    }
+                    Err(e) => debug!("SSH after IP discovery failed for vm {} ({ip}): {e}", vmid),
                 }
             }
         }
@@ -165,10 +203,17 @@ impl<'a> VmCollector<'a> {
             .unwrap_or_default();
         let services = parse_services_output(&svc_json);
 
+        let os_release = self
+            .client
+            .vm_agent_exec(node, vmid, &["cat", "/etc/os-release"])
+            .await
+            .unwrap_or_default();
+        let (os_name, os_version) = parse_os_release(&os_release);
+
         // Get primary IP
         let ip = self.client.vm_agent_ip(node, vmid).await;
 
-        Ok(AgentData { ip, mounts, processes, services })
+        Ok(AgentData { ip, os_name, os_version, mounts, processes, services })
     }
 
     // ── SSH path ───────────────────────────────────────────────────────────
@@ -230,18 +275,66 @@ impl<'a> VmCollector<'a> {
     }
 }
 
+async fn discover_ip_from_host(vmid: u32) -> Option<String> {
+    let cfg = Command::new("qm")
+        .args(["config", &vmid.to_string()])
+        .output()
+        .await
+        .ok()?;
+    if !cfg.status.success() {
+        return None;
+    }
+
+    let cfg_text = String::from_utf8_lossy(&cfg.stdout);
+    let macs: Vec<String> = cfg_text
+        .lines()
+        .filter(|line| line.starts_with("net"))
+        .filter_map(|line| line.split_once(':').map(|(_, rest)| rest))
+        .filter_map(|rest| rest.split_once('=').map(|(_, after)| after))
+        .filter_map(|after| after.split(',').next())
+        .map(|mac| mac.trim().to_lowercase())
+        .filter(|mac| mac.len() == 17)
+        .collect();
+
+    if macs.is_empty() {
+        return None;
+    }
+
+    let neigh = Command::new("ip")
+        .args(["neigh", "show"])
+        .output()
+        .await
+        .ok()?;
+    if !neigh.status.success() {
+        return None;
+    }
+
+    let neigh_text = String::from_utf8_lossy(&neigh.stdout);
+    for line in neigh_text.lines() {
+        let lower = line.to_lowercase();
+        if macs.iter().any(|mac| lower.contains(mac)) {
+            return line.split_whitespace().next().map(str::to_string);
+        }
+    }
+    None
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // SSH helpers (sync, run in spawn_blocking)
 // ──────────────────────────────────────────────────────────────────────────────
 
 struct AgentData {
     ip: Option<String>,
+    os_name: Option<String>,
+    os_version: Option<String>,
     mounts: Vec<VmDiskMount>,
     processes: Vec<VmProcess>,
     services: Vec<VmService>,
 }
 
 struct SshData {
+    os_name: Option<String>,
+    os_version: Option<String>,
     services: Vec<VmService>,
     mounts: Vec<VmDiskMount>,
 }
@@ -297,6 +390,9 @@ fn ssh_collect(ip: &str, cfg: &SshConfig) -> Result<SshData> {
     )?;
     let services = parse_services_output(&svc_out);
 
+    let os_out = ssh_exec(&sess, "cat /etc/os-release 2>/dev/null || true")?;
+    let (os_name, os_version) = parse_os_release(&os_out);
+
     // Disk mounts
     let df_out = ssh_exec(
         &sess,
@@ -305,7 +401,7 @@ fn ssh_collect(ip: &str, cfg: &SshConfig) -> Result<SshData> {
     )?;
     let mounts = parse_df_output(&df_out);
 
-    Ok(SshData { services, mounts })
+    Ok(SshData { os_name, os_version, services, mounts })
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -365,6 +461,26 @@ fn parse_services_output(output: &str) -> Vec<VmService> {
         return systemd;
     }
     parse_openrc_output(output)
+}
+
+fn parse_os_release(output: &str) -> (Option<String>, Option<String>) {
+    let mut name = None;
+    let mut version = None;
+
+    for line in output.lines() {
+        let Some((key, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = raw_value.trim().trim_matches('"').to_string();
+        match key {
+            "NAME" => name = Some(value),
+            "VERSION_ID" => version = Some(value),
+            "VERSION" if version.is_none() => version = Some(value),
+            _ => {}
+        }
+    }
+
+    (name, version)
 }
 
 fn parse_systemctl_json(output: &str) -> Vec<VmService> {

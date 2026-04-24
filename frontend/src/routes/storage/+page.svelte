@@ -1,87 +1,88 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-
-  let storages = $state<any[]>([]);
-  let wsConnected = $state(false);
-
-  function formatBytes(bytes: number) {
-    if (!+bytes) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-  }
-
-  onMount(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    ws.onopen = () => { wsConnected = true; };
-    ws.onclose = () => { wsConnected = false; };
-    ws.onmessage = (e) => {
-      try {
-        const p = JSON.parse(e.data);
-        if (p.type === 'lxc_detail' || p.type === 'vm_detail') {
-          const items = p.lxc || p.vms || [];
-          const allDisks: any[] = [];
-          for (const item of items) {
-            for (const d of item.disk_mounts || []) {
-              allDisks.push({ guest: item.name, vmid: item.vmid, ...d });
-            }
-          }
-          if (allDisks.length > 0) storages = allDisks;
-        }
-      } catch {}
-    };
-    return () => ws.close();
-  });
+  import { formatBytes, guestDiskMounts, pct, storagePools, wsConnected } from '$lib/store';
 </script>
 
 <div class="page">
   <h2 class="page-title">STORAGE OVERVIEW</h2>
 
-  {#if storages.length === 0}
-    <div class="neon-card empty"><div class="pulse-ring"></div><p>{wsConnected ? 'WAITING FOR STORAGE DATA...' : 'CONNECTING...'}</p></div>
-  {:else}
-    <div class="table-wrap neon-card">
-      <div class="table-header">
-        <span class="col-guest">GUEST</span>
-        <span class="col-mount">MOUNT</span>
-        <span class="col-used">USED</span>
-        <span class="col-total">TOTAL</span>
-        <span class="col-pct">USAGE</span>
-        <span class="col-bar">BAR</span>
-      </div>
-      {#each storages as s}
-        <div class="table-row">
-          <span class="col-guest">{s.guest} <span class="dim">({s.vmid})</span></span>
-          <span class="col-mount mono">{s.mountpoint}</span>
-          <span class="col-used">{formatBytes(s.used)}</span>
-          <span class="col-total">{formatBytes(s.total)}</span>
-          <span class="col-pct" class:warn={s.use_pct > 80} class:crit={s.use_pct > 95}>{s.use_pct.toFixed(0)}%</span>
-          <span class="col-bar">
-            <div class="bar"><div class="bar-fill" style="width:{s.use_pct}%; background:{s.use_pct > 90 ? 'var(--accent-red)' : s.use_pct > 70 ? 'var(--accent-yellow)' : 'var(--accent-green)'}"></div></div>
-          </span>
-        </div>
-      {/each}
+  <section class="panel">
+    <div class="section-head">
+      <span>Proxmox Storage Pools</span>
+      <small>{$storagePools.length} pools</small>
     </div>
-  {/if}
+    {#if $storagePools.length === 0}
+      <div class="empty">{$wsConnected ? 'WAITING FOR PROXMOX STORAGE DATA...' : 'CONNECTING...'}</div>
+    {:else}
+      <div class="storage-grid">
+        {#each $storagePools as pool (`${pool.node}-${pool.storage}`)}
+          <article class="pool-card" class:inactive={!pool.active || !pool.enabled}>
+            <div class="pool-head">
+              <div>
+                <h3>{pool.storage}</h3>
+                <p>{pool.node} · {pool.type}</p>
+              </div>
+              <span class:ok={pool.active && pool.enabled} class:bad={!pool.active || !pool.enabled}>{pool.active && pool.enabled ? 'ACTIVE' : 'DOWN'}</span>
+            </div>
+            <div class="usage">
+              <strong>{Math.round(pct(pool.used, pool.total))}%</strong>
+              <div class="bar"><div style="width:{Math.round(pct(pool.used, pool.total))}%"></div></div>
+              <small>{formatBytes(pool.used)} used · {formatBytes(pool.avail)} free · {formatBytes(pool.total)} total</small>
+            </div>
+            <div class="content">{pool.content || 'no content metadata'}</div>
+          </article>
+        {/each}
+      </div>
+    {/if}
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <span>Guest Filesystems</span>
+      <small>{$guestDiskMounts.length} mounts</small>
+    </div>
+    {#if $guestDiskMounts.length === 0}
+      <div class="hint">Guest mount data requires QEMU Guest Agent or SSH for VMs. LXC mount data is available when containers exist on the monitored host.</div>
+    {:else}
+      <div class="mount-table">
+        <div class="table-head"><span>Guest</span><span>Mount</span><span>Node</span><span>Used</span><span>Total</span><span>Usage</span></div>
+        {#each $guestDiskMounts as mount (`${mount.vmid}-${mount.mountpoint}`)}
+          <div class="table-row">
+            <span>{mount.guest} <small>({mount.vmid})</small></span>
+            <span class="mono">{mount.mountpoint}</span>
+            <span>{mount.node}</span>
+            <span>{formatBytes(mount.used)}</span>
+            <span>{formatBytes(mount.total)}</span>
+            <span class:bad={mount.use_pct > 90}>{mount.use_pct.toFixed(0)}%</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </section>
 </div>
 
 <style>
-  .page { display: flex; flex-direction: column; gap: 20px; }
-  .page-title { font-size: 0.85rem; letter-spacing: 3px; color: var(--text-secondary); font-weight: 600; }
-  .table-wrap { padding: 16px; }
-  .table-header, .table-row { display: grid; grid-template-columns: 1.2fr 1.5fr 0.8fr 0.8fr 0.6fr 1fr; align-items: center; padding: 8px 0; font-size: 0.75rem; }
-  .table-header { font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 2px; font-weight: 600; border-bottom: 1px solid var(--border-color); }
-  .table-row { border-bottom: 1px solid rgba(255,255,255,0.02); }
-  .table-row:hover { background: rgba(0,212,255,0.03); }
-  .mono { font-family: 'Courier New', monospace; font-size: 0.7rem; color: var(--text-secondary); }
-  .dim { font-size: 0.6rem; color: var(--text-dim); }
-  .warn { color: var(--accent-yellow) !important; }
-  .crit { color: var(--accent-red) !important; }
-  .bar { height: 5px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
-  .empty { padding: 60px; text-align: center; color: var(--text-secondary); letter-spacing: 2px; font-size: 0.85rem; }
-  .pulse-ring { width: 40px; height: 40px; border: 2px solid var(--accent-cyan); border-radius: 50%; margin: 0 auto 20px; animation: pr 2s ease-in-out infinite; }
-  @keyframes pr { 0%,100% { transform: scale(0.8); opacity: 0.3; } 50% { transform: scale(1.1); opacity: 1; } }
+  .page { display: flex; flex-direction: column; gap: 16px; }
+  .page-title { font-size: 0.85rem; letter-spacing: 3px; color: var(--text-secondary); font-weight: 800; }
+  .panel { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; }
+  .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; color: var(--text-primary); font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; font-size: 0.7rem; }
+  .section-head small { color: var(--text-secondary); }
+  .storage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .pool-card { min-height: 174px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+  .pool-card.inactive { border-color: rgba(255,51,85,0.35); }
+  .pool-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  h3 { font-size: 1rem; overflow-wrap: anywhere; }
+  p, small, .content, .hint, .empty { color: var(--text-secondary); }
+  p { font-size: 0.68rem; margin-top: 4px; }
+  .ok { color: var(--accent-green); }
+  .bad { color: var(--accent-red); }
+  .usage strong { color: var(--accent-cyan); font-size: 1.2rem; }
+  .bar { margin: 8px 0; height: 7px; border-radius: 999px; background: rgba(255,255,255,0.07); overflow: hidden; }
+  .bar div { height: 100%; background: var(--accent-cyan); border-radius: inherit; }
+  .content { font-size: 0.64rem; line-height: 1.35; min-height: 28px; }
+  .mount-table { overflow-x: auto; }
+  .table-head, .table-row { min-width: 860px; display: grid; grid-template-columns: 1.3fr 1.4fr 1fr 0.8fr 0.8fr 0.6fr; gap: 12px; padding: 9px 10px; align-items: center; }
+  .table-head { color: var(--text-secondary); font-size: 0.58rem; letter-spacing: 2px; text-transform: uppercase; border-bottom: 1px solid var(--border-color); }
+  .table-row { border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.74rem; }
+  .mono { font-family: 'Courier New', monospace; color: var(--text-secondary); }
+  .hint, .empty { min-height: 120px; display: grid; place-items: center; text-align: center; letter-spacing: 1px; }
 </style>

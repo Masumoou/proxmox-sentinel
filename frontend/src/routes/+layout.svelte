@@ -1,8 +1,14 @@
 <script lang="ts">
   import '../app.css';
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
+  import { initWebSocket } from '$lib/store';
   let { children } = $props();
   let currentPath = $derived(page.url.pathname);
+
+  onMount(() => {
+    initWebSocket();
+  });
 </script>
 
 <div class="dashboard-container">

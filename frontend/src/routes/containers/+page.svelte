@@ -1,97 +1,57 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { enrichedGuests, formatBytes, pct, wsConnected } from '$lib/store';
 
-  let guests = $state<any[]>([]);
-  let wsConnected = $state(false);
-  let detailMap: Record<number, any> = {};
-
-  function formatBytes(bytes: number, decimals = 1) {
-    if (!+bytes) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
-  }
-
-  let lxcGuests = $derived(guests.filter(g => (g.type || '').toLowerCase() === 'lxc'));
-
-  onMount(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    ws.onopen = () => { wsConnected = true; };
-    ws.onclose = () => { wsConnected = false; };
-    ws.onmessage = (e) => {
-      try {
-        const p = JSON.parse(e.data);
-        if (p.type === 'cluster_update') {
-          guests = (p.guests || []).filter((g: any) => g.type === 'lxc').map((g: any) => {
-            const d = detailMap[g.vmid] || {};
-            return { id: g.vmid, name: g.name, node: g.node, type: 'LXC', status: g.status, cpu: Math.round(g.cpu * 100), ram: formatBytes(g.mem), services: d.services || [], disk_mounts: d.disk_mounts || [] };
-          });
-        }
-        if (p.type === 'lxc_detail') {
-          for (const lxc of p.lxc || []) detailMap[lxc.vmid] = { services: lxc.services || [], disk_mounts: lxc.disk_mounts || [] };
-          guests = guests.map(g => ({ ...g, ...(detailMap[g.id] || {}) }));
-        }
-      } catch {}
-    };
-    return () => ws.close();
-  });
+  let containers = $derived($enrichedGuests.filter((guest) => guest.type === 'LXC'));
 </script>
 
 <div class="page">
   <h2 class="page-title">CONTAINERS (LXC)</h2>
 
-  {#if lxcGuests.length === 0}
-    <div class="neon-card empty"><div class="pulse-ring"></div><p>{wsConnected ? 'NO LXC CONTAINERS FOUND' : 'CONNECTING...'}</p></div>
+  {#if containers.length === 0}
+    <div class="empty">{$wsConnected ? 'NO LXC CONTAINERS FOUND IN CURRENT TELEMETRY' : 'CONNECTING...'}</div>
   {:else}
     <div class="grid">
-      {#each lxcGuests as ct}
-        <div class="neon-card neon-card-purple card">
-          <div class="card-head">
-            <div><div class="ct-name">{ct.name}</div><div class="ct-id">CT {ct.id} • {ct.node || '—'}</div></div>
-            <span class="status-badge" class:up={ct.status === 'running'} class:down={ct.status !== 'running'}>● {ct.status.toUpperCase()}</span>
+      {#each containers as ct (ct.vmid)}
+        <article class="card">
+          <div class="head">
+            <div><h3>{ct.name}</h3><p>CT {ct.vmid} · {ct.node}</p></div>
+            <span class:ok={ct.status === 'running'} class:bad={ct.status !== 'running'}>{ct.status}</span>
           </div>
           <div class="metrics">
-            <div><span class="label">CPU</span><span class="val text-cyan">{ct.cpu}%</span></div>
-            <div><span class="label">MEM</span><span class="val text-cyan">{ct.ram}</span></div>
+            <div><span>CPU</span><strong>{Math.round(ct.cpu * 100)}%</strong></div>
+            <div><span>RAM</span><strong>{formatBytes(ct.mem)}</strong><small>{Math.round(pct(ct.mem, ct.maxmem))}%</small></div>
+            <div><span>PIDS</span><strong>{ct.pids || '-'}</strong></div>
           </div>
-          {#if ct.services && ct.services.length > 0}
-            <div class="svcs">
-              {#each ct.services as svc}
-                <div class="svc-row">
-                  <span class="svc-dot" style="background: {svc.status === 'running' ? 'var(--accent-green)' : 'var(--accent-red)'}"></span>
-                  <span class="svc-name">{svc.name}</span>
-                  <span class={svc.status === 'running' ? 'badge-active' : 'badge-inactive'}>{svc.status === 'running' ? 'ACTIVE' : 'DOWN'}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
+          <div class="services">
+            {#each ct.services.slice(0, 10) as service}
+              <span class:down={service.status !== 'running'}>{service.name}</span>
+            {:else}
+              <em>No services discovered</em>
+            {/each}
+          </div>
+        </article>
       {/each}
     </div>
   {/if}
 </div>
 
 <style>
-  .page { display: flex; flex-direction: column; gap: 20px; }
-  .page-title { font-size: 0.85rem; letter-spacing: 3px; color: var(--text-secondary); font-weight: 600; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
-  .card { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
-  .card-head { display: flex; justify-content: space-between; align-items: flex-start; }
-  .ct-name { font-size: 1.05rem; font-weight: 700; letter-spacing: 1px; }
-  .ct-id { font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 1.5px; margin-top: 2px; }
-  .status-badge { font-size: 0.65rem; font-weight: 600; letter-spacing: 1px; }
-  .up { color: var(--accent-green); }
-  .down { color: var(--accent-red); }
-  .metrics { display: flex; gap: 24px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
-  .label { font-size: 0.55rem; color: var(--text-secondary); letter-spacing: 2px; margin-right: 8px; }
-  .val { font-size: 1.1rem; font-weight: 700; }
-  .svcs { display: flex; flex-direction: column; gap: 4px; }
-  .svc-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
-  .svc-dot { width: 7px; height: 7px; border-radius: 50%; }
-  .svc-name { font-size: 0.72rem; font-weight: 600; letter-spacing: 1px; flex: 1; }
-  .empty { padding: 60px; text-align: center; color: var(--text-secondary); letter-spacing: 2px; font-size: 0.85rem; }
-  .pulse-ring { width: 40px; height: 40px; border: 2px solid var(--accent-purple); border-radius: 50%; margin: 0 auto 20px; animation: pr 2s ease-in-out infinite; }
-  @keyframes pr { 0%,100% { transform: scale(0.8); opacity: 0.3; } 50% { transform: scale(1.1); opacity: 1; } }
+  .page { display: flex; flex-direction: column; gap: 16px; }
+  .page-title { font-size: 0.85rem; letter-spacing: 3px; color: var(--text-secondary); font-weight: 800; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .card, .empty { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; }
+  .card { min-height: 220px; padding: 15px; display: flex; flex-direction: column; gap: 14px; }
+  .head { display: flex; justify-content: space-between; gap: 12px; min-height: 54px; }
+  h3 { font-size: 1rem; overflow-wrap: anywhere; }
+  p, em, small { color: var(--text-secondary); font-size: 0.68rem; }
+  .ok { color: var(--accent-green); }
+  .bad { color: var(--accent-red); }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .metrics div { border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 9px; min-height: 70px; }
+  .metrics span { display: block; color: var(--text-secondary); font-size: 0.58rem; letter-spacing: 1.5px; }
+  .metrics strong { display: block; margin-top: 8px; }
+  .services { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+  .services span { color: var(--accent-green); border: 1px solid rgba(0,255,136,0.18); background: rgba(0,255,136,0.08); border-radius: 4px; padding: 3px 7px; font-size: 0.65rem; }
+  .services span.down { color: var(--accent-red); border-color: rgba(255,51,85,0.22); background: rgba(255,51,85,0.08); }
+  .empty { min-height: 320px; display: grid; place-items: center; color: var(--text-secondary); letter-spacing: 2px; }
 </style>

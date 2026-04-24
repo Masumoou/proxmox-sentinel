@@ -25,6 +25,8 @@ use tracing::debug;
 pub struct LxcDetailedStats {
     pub vmid: u32,
     pub name: String,
+    pub os_name: Option<String>,
+    pub os_version: Option<String>,
     pub cgroup: CgroupStats,
     pub network: Vec<NetIfaceStats>,
     pub services: Vec<ServiceStatus>,
@@ -115,6 +117,7 @@ impl LxcCollector {
         };
         let services = Self::list_services(vmid).await.unwrap_or_default();
         let disk_mounts = Self::read_disk_usage(vmid).await.unwrap_or_default();
+        let (os_name, os_version) = Self::read_os_release(vmid).await.unwrap_or((None, None));
         let processes = match init_pid {
             Some(pid) => Self::read_top_processes(pid).await.unwrap_or_default(),
             None => vec![],
@@ -123,6 +126,8 @@ impl LxcCollector {
         LxcDetailedStats {
             vmid,
             name: name.to_string(),
+            os_name,
+            os_version,
             cgroup,
             network,
             services,
@@ -210,6 +215,18 @@ impl LxcCollector {
     }
 
     // ── Find container's init PID from host /proc ──────────────────────────
+
+    async fn read_os_release(vmid: u32) -> Result<(Option<String>, Option<String>)> {
+        let out = Command::new("pct")
+            .args(["exec", &vmid.to_string(), "--", "cat", "/etc/os-release"])
+            .output()
+            .await
+            .context("pct exec cat /etc/os-release")?;
+        if !out.status.success() {
+            return Ok((None, None));
+        }
+        Ok(parse_os_release(&String::from_utf8_lossy(&out.stdout)))
+    }
 
     async fn find_init_pid(vmid: u32) -> Option<u32> {
         let procs_path = Self::lxc_cgroup_base(vmid)?.join("cgroup.procs");
@@ -507,6 +524,26 @@ fn parse_services_text(output: &str) -> Vec<ServiceStatus> {
             })
         })
         .collect()
+}
+
+fn parse_os_release(output: &str) -> (Option<String>, Option<String>) {
+    let mut name = None;
+    let mut version = None;
+
+    for line in output.lines() {
+        let Some((key, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = raw_value.trim().trim_matches('"').to_string();
+        match key {
+            "NAME" => name = Some(value),
+            "VERSION_ID" => version = Some(value),
+            "VERSION" if version.is_none() => version = Some(value),
+            _ => {}
+        }
+    }
+
+    (name, version)
 }
 
 #[allow(dead_code)]
