@@ -344,6 +344,10 @@ fn default_server_url() -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServicesConfig {
+    #[serde(default = "default_service_auto_discovery")]
+    pub auto_discover: bool,
+    #[serde(default = "default_alert_on_discovered_services")]
+    pub alert_on_discovered: bool,
     #[serde(default)]
     pub lxc: Vec<LxcServiceChecks>,
     #[serde(default)]
@@ -353,9 +357,17 @@ pub struct ServicesConfig {
 
 impl Default for ServicesConfig {
     fn default() -> Self {
-        Self { lxc: vec![], vm: vec![] }
+        Self {
+            auto_discover: default_service_auto_discovery(),
+            alert_on_discovered: default_alert_on_discovered_services(),
+            lxc: vec![],
+            vm: vec![],
+        }
     }
 }
+
+fn default_service_auto_discovery() -> bool { true }
+fn default_alert_on_discovered_services() -> bool { true }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LxcServiceChecks {

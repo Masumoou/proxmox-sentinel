@@ -73,6 +73,10 @@
     return `background: conic-gradient(${color} ${pct * 3.6}deg, rgba(255,255,255,0.04) 0deg);`;
   }
 
+  function clampPct(pct: number) {
+    return Math.min(100, Math.max(0, pct || 0));
+  }
+
   let reconnectAttempts = $state(0);
 
   onMount(() => {
@@ -229,7 +233,7 @@
   </div>
 
   <div class="dash-header">
-    <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v0.2.0</span></div>
+    <div class="system-brand">PROXMOX <span class="text-magenta">SENTINEL</span> <span class="text-dim">v0.2.2</span></div>
     <div class="header-actions">
       <div class="conn-status" class:conn-online={wsConnected}>
         {wsConnected ? 'LIVE TELEMETRY' : reconnectAttempts > 0 ? `RECONNECTING... (attempt ${reconnectAttempts})` : 'CONNECTING...'}
@@ -281,7 +285,7 @@
                 {#each guest.disk_mounts as mount, i}
                   <div class="bw-value" style="font-size:0.6rem;">{mount.mountpoint}: {formatBytes(mount.used)} / {formatBytes(mount.total)}</div>
                   <div class="disk-bar">
-                     <div class="disk-fill" style="width: {Math.min(100, Math.max(0, mount.use_pct * 100))}%;"></div>
+                     <div class="disk-fill" style="width: {clampPct(mount.use_pct)}%;"></div>
                   </div>
                 {/each}
               {:else}

@@ -83,6 +83,7 @@ impl<'a> VmCollector<'a> {
             Ok(agent_data) => {
                 stats.agent_available = true;
                 stats.ip_address = agent_data.ip;
+                stats.services = agent_data.services;
                 stats.disk_mounts = agent_data.mounts;
                 stats.top_processes = agent_data.processes;
 
@@ -91,7 +92,9 @@ impl<'a> VmCollector<'a> {
                     match self.collect_via_ssh(ip).await {
                         Ok(ssh_data) => {
                             stats.ssh_available = true;
-                            stats.services = ssh_data.services;
+                            if !ssh_data.services.is_empty() {
+                                stats.services = ssh_data.services;
+                            }
                         }
                         Err(e) => debug!("SSH to vm {} ({ip}): {e}", vmid),
                     }
@@ -145,10 +148,27 @@ impl<'a> VmCollector<'a> {
 
         let processes = parse_ps_output(&ps_json);
 
+        // Service discovery through QEMU Guest Agent keeps VM monitoring agentless:
+        // no Sentinel sidecar inside the VM and no SSH key requirement.
+        let svc_json = self
+            .client
+            .vm_agent_exec(
+                node,
+                vmid,
+                &[
+                    "sh",
+                    "-lc",
+                    "systemctl list-units --type=service --no-pager --no-legend --output=json 2>/dev/null || systemctl list-units --type=service --no-pager --no-legend --plain 2>/dev/null || rc-status --nocolor 2>/dev/null || true",
+                ],
+            )
+            .await
+            .unwrap_or_default();
+        let services = parse_services_output(&svc_json);
+
         // Get primary IP
         let ip = self.client.vm_agent_ip(node, vmid).await;
 
-        Ok(AgentData { ip, mounts, processes })
+        Ok(AgentData { ip, mounts, processes, services })
     }
 
     // ── SSH path ───────────────────────────────────────────────────────────
@@ -218,6 +238,7 @@ struct AgentData {
     ip: Option<String>,
     mounts: Vec<VmDiskMount>,
     processes: Vec<VmProcess>,
+    services: Vec<VmService>,
 }
 
 struct SshData {
@@ -271,9 +292,10 @@ fn ssh_collect(ip: &str, cfg: &SshConfig) -> Result<SshData> {
     let svc_out = ssh_exec(
         &sess,
         "systemctl list-units --type=service --no-pager --no-legend \
-         --output=json 2>/dev/null || rc-status --nocolor 2>/dev/null",
+         --output=json 2>/dev/null || systemctl list-units --type=service --no-pager --no-legend \
+         --plain 2>/dev/null || rc-status --nocolor 2>/dev/null",
     )?;
-    let services = parse_systemctl_json(&svc_out);
+    let services = parse_services_output(&svc_out);
 
     // Disk mounts
     let df_out = ssh_exec(
@@ -333,6 +355,18 @@ fn parse_ps_output(output: &str) -> Vec<VmProcess> {
         .collect()
 }
 
+fn parse_services_output(output: &str) -> Vec<VmService> {
+    let trimmed = output.trim_start();
+    if trimmed.starts_with('[') {
+        return parse_systemctl_json(output);
+    }
+    let systemd = parse_systemctl_plain(output);
+    if !systemd.is_empty() {
+        return systemd;
+    }
+    parse_openrc_output(output)
+}
+
 fn parse_systemctl_json(output: &str) -> Vec<VmService> {
     #[derive(serde::Deserialize)]
     struct Unit {
@@ -348,6 +382,50 @@ fn parse_systemctl_json(output: &str) -> Vec<VmService> {
             name: u.unit,
             active: u.active == "active",
             status: u.sub,
+        })
+        .collect()
+}
+
+fn parse_openrc_output(output: &str) -> Vec<VmService> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('[') {
+                return None;
+            }
+            let bracket = line.rfind('[')?;
+            let name = line[..bracket].trim().to_string();
+            let state = line[bracket + 1..].trim_end_matches(']').trim().to_string();
+            if name.is_empty() {
+                return None;
+            }
+            Some(VmService {
+                name,
+                active: state == "started",
+                status: state,
+            })
+        })
+        .collect()
+}
+
+fn parse_systemctl_plain(output: &str) -> Vec<VmService> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("UNIT ") || line.starts_with("LOAD ") {
+                return None;
+            }
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 4 || !parts[0].ends_with(".service") {
+                return None;
+            }
+            Some(VmService {
+                name: parts[0].to_string(),
+                active: parts[2] == "active",
+                status: parts[3].to_string(),
+            })
         })
         .collect()
 }

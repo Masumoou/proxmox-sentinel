@@ -115,6 +115,14 @@ async fn main() -> Result<()> {
     run(cfg).await
 }
 
+fn normalize_service_name(name: &str) -> String {
+    name.strip_suffix(".service").unwrap_or(name).to_string()
+}
+
+fn service_is_healthy(state: &str, sub_state: &str) -> bool {
+    matches!(state, "active" | "started") && !matches!(sub_state, "failed" | "dead")
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Main loop
 // ──────────────────────────────────────────────────────────────────────────────
@@ -390,6 +398,7 @@ async fn run(cfg: Config) -> Result<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(cgroup_secs));
             let mut watched_lxcs: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            let mut discovered_lxc_services: std::collections::HashMap<u32, std::collections::HashSet<String>> = std::collections::HashMap::new();
             let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
 
             loop {
@@ -412,39 +421,69 @@ async fn run(cfg: Config) -> Result<()> {
 
                         let tracked_services = cfg_inner.services.lxc.iter().find(|l| l.vmid == guest.vmid);
 
-                        // Build services JSON for only tracked services
-                        let svcs: Vec<serde_json::Value> = stats.services.iter().filter(|s| {
-                            if let Some(tracked) = tracked_services {
-                                let name = s.name.replace(".service", "");
-                                tracked.checks.contains(&s.name) || tracked.checks.contains(&name)
-                            } else {
-                                false
+                        let active_services: std::collections::HashSet<String> = stats.services
+                            .iter()
+                            .filter(|s| service_is_healthy(&s.state, &s.sub_state))
+                            .map(|s| normalize_service_name(&s.name))
+                            .collect();
+
+                        let should_show_service = |name: &str| {
+                            if cfg_inner.services.auto_discover {
+                                return true;
                             }
-                        }).map(|s| {
-                            let is_active = s.state == "active";
-                            
-                            // Fire alert if configured service is down
-                            if !is_active {
-                                // We check manually because async dispatch inside map is tricky, 
-                                // we will dispatch these below
+                            tracked_services
+                                .map(|tracked| {
+                                    let short = normalize_service_name(name);
+                                    tracked.checks.contains(&name.to_string()) || tracked.checks.contains(&short)
+                                })
+                                .unwrap_or(false)
+                        };
+
+                        let svcs: Vec<serde_json::Value> = stats.services.iter()
+                            .filter(|s| should_show_service(&s.name))
+                            .map(|s| {
+                                let is_active = service_is_healthy(&s.state, &s.sub_state);
+                                json!({
+                                    "name": normalize_service_name(&s.name),
+                                    "status": if is_active { "running" } else { "failed" },
+                                    "state": s.state.as_str(),
+                                    "sub_state": s.sub_state.as_str()
+                                })
+                            })
+                            .collect();
+                        
+                        if !stats.services.is_empty() {
+                            // Dispatch alerts for explicitly tracked services that are down or missing.
+                            if let Some(tracked) = tracked_services {
+                                for service in &tracked.checks {
+                                    let name = normalize_service_name(service);
+                                    if !active_services.contains(&name) {
+                                        dispatcher.dispatch(Alert::ServiceUnavailable {
+                                            vmid: guest.vmid,
+                                            node: guest.node.clone(),
+                                            service: name,
+                                        }).await;
+                                    }
+                                }
                             }
 
-                            json!({
-                                "name": s.name.replace(".service", ""),
-                                "status": if is_active { "running" } else { "failed" }
-                            })
-                        }).collect();
-                        
-                        // Dispatch alerts for tracked services that are down
-                        if let Some(tracked) = tracked_services {
-                            for s in &stats.services {
-                                let name = s.name.replace(".service", "");
-                                if (tracked.checks.contains(&s.name) || tracked.checks.contains(&name)) && s.state != "active" {
-                                    dispatcher.dispatch(Alert::ServiceUnavailable {
-                                        vmid: guest.vmid,
-                                        node: guest.node.clone(),
-                                        service: name,
-                                    }).await;
+                            if cfg_inner.services.alert_on_discovered {
+                                let baseline = discovered_lxc_services.entry(guest.vmid).or_default();
+                                if baseline.is_empty() {
+                                    baseline.extend(active_services.iter().cloned());
+                                } else {
+                                    let missing: Vec<String> = baseline
+                                        .difference(&active_services)
+                                        .cloned()
+                                        .collect();
+                                    for service in missing {
+                                        dispatcher.dispatch(Alert::ServiceUnavailable {
+                                            vmid: guest.vmid,
+                                            node: guest.node.clone(),
+                                            service,
+                                        }).await;
+                                    }
+                                    baseline.extend(active_services.iter().cloned());
                                 }
                             }
                         }
@@ -522,6 +561,7 @@ async fn run(cfg: Config) -> Result<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(vm_secs));
             let mut conn_failures: std::collections::HashMap<u32, u8> = std::collections::HashMap::new();
+            let mut discovered_vm_services: std::collections::HashMap<u32, std::collections::HashSet<String>> = std::collections::HashMap::new();
             let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
 
             loop {
@@ -561,12 +601,57 @@ async fn run(cfg: Config) -> Result<()> {
                             conn_failures.insert(guest.vmid, 0);
                         }
 
+                        let active_services: std::collections::HashSet<String> = vm_stats.services
+                            .iter()
+                            .filter(|s| s.active)
+                            .map(|s| normalize_service_name(&s.name))
+                            .collect();
+
                         let svcs: Vec<serde_json::Value> = vm_stats.services.iter().map(|s| {
                             json!({
-                                "name": s.name,
-                                "status": if s.active { "running" } else { "stopped" }
+                                "name": normalize_service_name(&s.name),
+                                "status": if s.active { "running" } else { "stopped" },
+                                "state": if s.active { "active" } else { "inactive" },
+                                "sub_state": s.status.as_str()
                             })
                         }).collect();
+
+                        if !vm_stats.services.is_empty() {
+                            if let Some(ref ip) = vm_stats.ip_address {
+                                if let Some(tracked) = cfg_inner.services.vm.iter().find(|v| &v.ip == ip) {
+                                    for service in &tracked.checks {
+                                        let name = normalize_service_name(service);
+                                        if !active_services.contains(&name) {
+                                            dispatcher.dispatch(Alert::ServiceUnavailable {
+                                                vmid: guest.vmid,
+                                                node: node.clone(),
+                                                service: name,
+                                            }).await;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if cfg_inner.services.alert_on_discovered {
+                                let baseline = discovered_vm_services.entry(guest.vmid).or_default();
+                                if baseline.is_empty() {
+                                    baseline.extend(active_services.iter().cloned());
+                                } else {
+                                    let missing: Vec<String> = baseline
+                                        .difference(&active_services)
+                                        .cloned()
+                                        .collect();
+                                    for service in missing {
+                                        dispatcher.dispatch(Alert::ServiceUnavailable {
+                                            vmid: guest.vmid,
+                                            node: node.clone(),
+                                            service,
+                                        }).await;
+                                    }
+                                    baseline.extend(active_services.iter().cloned());
+                                }
+                            }
+                        }
 
                         let disks: Vec<serde_json::Value> = vm_stats.disk_mounts.iter().map(|d| {
                             json!({

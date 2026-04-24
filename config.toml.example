@@ -89,8 +89,14 @@ vm_interval_secs             = 30   # Deep VM stats every 30s
 service_check_interval_secs  = 60   # Check services every 60s
 
 # ── Guest Services Monitoring (Optional) ─────────────────────────────────────
-# Defines internal systemd services to track per VM/LXC
-# [services.lxc]
+# By default Sentinel discovers all active systemd/OpenRC services it can see.
+# If a discovered service later stops, fails, or disappears, Sentinel alerts.
+[services]
+auto_discover       = true
+alert_on_discovered = true
+
+# Optional: mark specific services as critical for a VM/LXC. These alerts fire
+# even if the service was already stopped when Sentinel first started.
 # [[services.lxc]]
 # vmid = 100
 # checks = ["apache2", "php8.3-fpm", "redis-server"]

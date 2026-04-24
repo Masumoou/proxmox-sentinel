@@ -99,7 +99,7 @@
     <div>
       <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
         <LayoutDashboard class="w-8 h-8 text-indigo-400" />
-        APP OVERVIEW <span class="text-xs font-mono text-indigo-500/50 align-top">v0.2.0</span>
+        APP OVERVIEW <span class="text-xs font-mono text-indigo-500/50 align-top">v0.2.2</span>
       </h1>
       <p class="text-zinc-400 text-sm">Universal application monitoring and log aggregation</p>
     </div>

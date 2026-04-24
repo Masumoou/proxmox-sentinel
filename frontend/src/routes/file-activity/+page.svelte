@@ -96,7 +96,7 @@
     <div>
       <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
         <ShieldAlert class="w-8 h-8 text-cyan-400" />
-        FILE ACTIVITY <span class="text-xs font-mono text-cyan-500/50 align-top">v0.2.0</span>
+        FILE ACTIVITY <span class="text-xs font-mono text-cyan-500/50 align-top">v0.2.2</span>
       </h1>
       <p class="text-zinc-400 text-sm">Real-time security auditing and access patterns</p>
     </div>

@@ -135,15 +135,8 @@ impl LxcCollector {
     // ── cgroup v2 ──────────────────────────────────────────────────────────
 
     async fn read_cgroup(vmid: u32) -> Result<CgroupStats> {
-        // Proxmox puts LXC cgroups at /sys/fs/cgroup/lxc/<vmid>
-        // On Proxmox 7+ with cgroup v2
-        let base = PathBuf::from(format!("/sys/fs/cgroup/lxc/{}", vmid));
-
-        if !base.exists() {
-            // Try unified hierarchy fallback
-            debug!("cgroup path not found for LXC {vmid}");
-            anyhow::bail!("No cgroup found for LXC {vmid}");
-        }
+        let base = Self::lxc_cgroup_base(vmid)
+            .ok_or_else(|| anyhow::anyhow!("No cgroup found for LXC {vmid}"))?;
 
         let mut stats = CgroupStats::default();
 
@@ -219,18 +212,28 @@ impl LxcCollector {
     // ── Find container's init PID from host /proc ──────────────────────────
 
     async fn find_init_pid(vmid: u32) -> Option<u32> {
-        // pct list gives the init pid, or we can scan /proc
-        let _out = Command::new("pct")
-            .args(["list"])
-            .output()
-            .await
-            .ok()?;
-        // Simpler: read /proc/*/status and look for name == "init" in LXC cgroup
-        // Best approach: use the cgroup freezer or read /sys/fs/cgroup/lxc/<vmid>/cgroup.procs
-        let procs_path = format!("/sys/fs/cgroup/lxc/{}/cgroup.procs", vmid);
+        let procs_path = Self::lxc_cgroup_base(vmid)?.join("cgroup.procs");
         let content = fs::read_to_string(&procs_path).await.ok()?;
         // First PID is usually the container init
         content.lines().next()?.trim().parse::<u32>().ok()
+    }
+
+    fn lxc_cgroup_base(vmid: u32) -> Option<PathBuf> {
+        let candidates = [
+            format!("/sys/fs/cgroup/lxc/{vmid}"),
+            format!("/sys/fs/cgroup/lxc/{vmid}.scope"),
+            format!("/sys/fs/cgroup/machine.slice/lxc-{vmid}.scope"),
+            format!("/sys/fs/cgroup/system.slice/pve-container@{vmid}.service"),
+        ];
+
+        candidates
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|path| path.join("cgroup.procs").exists() || path.join("memory.current").exists())
+            .or_else(|| {
+                debug!("cgroup path not found for LXC {vmid}");
+                None
+            })
     }
 
     // ── Network stats via /proc/<init_pid>/net/dev ─────────────────────────
@@ -283,12 +286,9 @@ impl LxcCollector {
                 "exec",
                 &vmid.to_string(),
                 "--",
-                "systemctl",
-                "list-units",
-                "--type=service",
-                "--no-pager",
-                "--no-legend",
-                "--output=json",
+                "sh",
+                "-lc",
+                "systemctl list-units --type=service --no-pager --no-legend --output=json 2>/dev/null || systemctl list-units --type=service --no-pager --no-legend --plain 2>/dev/null || rc-status --nocolor 2>/dev/null",
             ])
             .output()
             .await
@@ -308,17 +308,21 @@ impl LxcCollector {
         }
 
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let units: Vec<UnitJson> = serde_json::from_str(&stdout).unwrap_or_default();
+        if stdout.trim_start().starts_with('[') {
+            let units: Vec<UnitJson> = serde_json::from_str(&stdout).unwrap_or_default();
 
-        Ok(units
-            .into_iter()
-            .map(|u| ServiceStatus {
-                name: u.unit,
-                state: u.active,
-                sub_state: u.sub,
-                enabled: u.load == "loaded",
-            })
-            .collect())
+            return Ok(units
+                .into_iter()
+                .map(|u| ServiceStatus {
+                    name: u.unit,
+                    state: u.active,
+                    sub_state: u.sub,
+                    enabled: u.load == "loaded",
+                })
+                .collect());
+        }
+
+        Ok(parse_services_text(&stdout))
     }
 
     async fn list_services_openrc(vmid: u32) -> Result<Vec<ServiceStatus>> {
@@ -465,6 +469,44 @@ async fn read_file(path: impl AsRef<Path>) -> Result<String> {
 
 async fn read_u64(path: impl AsRef<Path>) -> Result<u64> {
     read_file(path).await?.trim().parse().map_err(Into::into)
+}
+
+fn parse_services_text(output: &str) -> Vec<ServiceStatus> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("UNIT ") || line.starts_with("LOAD ") {
+                return None;
+            }
+
+            if let Some(bracket) = line.rfind('[') {
+                let name = line[..bracket].trim().to_string();
+                let state = line[bracket + 1..].trim_end_matches(']').trim().to_string();
+                if name.is_empty() {
+                    return None;
+                }
+                return Some(ServiceStatus {
+                    name,
+                    state: state.clone(),
+                    sub_state: state,
+                    enabled: true,
+                });
+            }
+
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 4 || !parts[0].ends_with(".service") {
+                return None;
+            }
+
+            Some(ServiceStatus {
+                name: parts[0].to_string(),
+                state: parts[2].to_string(),
+                sub_state: parts[3].to_string(),
+                enabled: parts[1] == "loaded",
+            })
+        })
+        .collect()
 }
 
 #[allow(dead_code)]
