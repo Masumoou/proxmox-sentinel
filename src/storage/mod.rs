@@ -156,7 +156,17 @@ impl Storage {
         conn.execute(
             "INSERT INTO node_metrics (node, cpu, mem_used, mem_total, swap_used, swap_total, disk_used, disk_total, load_avg1)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![node, cpu, mem_used, mem_total, swap_used, swap_total, disk_used, disk_total, load_avg1],
+            params![
+                node,
+                cpu,
+                sqlite_i64(mem_used),
+                sqlite_i64(mem_total),
+                sqlite_i64(swap_used),
+                sqlite_i64(swap_total),
+                sqlite_i64(disk_used),
+                sqlite_i64(disk_total),
+                load_avg1
+            ],
         )?;
         Ok(())
     }
@@ -176,7 +186,7 @@ impl Storage {
         conn.execute(
             "INSERT INTO guest_metrics (vmid, name, kind, status, cpu, mem_used, mem_total, node)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![vmid, name, kind, status, cpu, mem_used, mem_total, node],
+            params![vmid, name, kind, status, cpu, sqlite_i64(mem_used), sqlite_i64(mem_total), node],
         )?;
         Ok(())
     }
@@ -214,7 +224,15 @@ impl Storage {
         conn.execute(
             "INSERT INTO haproxy_metrics (proxy_name, server_name, status, sessions, bytes_in, bytes_out, http_5xx)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![proxy_name, server_name, status, sessions, bytes_in, bytes_out, http_5xx],
+            params![
+                proxy_name,
+                server_name,
+                status,
+                sqlite_i64(sessions),
+                sqlite_i64(bytes_in),
+                sqlite_i64(bytes_out),
+                sqlite_i64(http_5xx)
+            ],
         )?;
         Ok(())
     }
@@ -250,12 +268,12 @@ impl Storage {
             Ok(serde_json::json!({
                 "ts": row.get::<_, String>(0)?,
                 "cpu": row.get::<_, f64>(1)?,
-                "mem_used": row.get::<_, u64>(2)?,
-                "mem_total": row.get::<_, u64>(3)?,
-                "swap_used": row.get::<_, u64>(4)?,
-                "swap_total": row.get::<_, u64>(5)?,
-                "disk_used": row.get::<_, u64>(6)?,
-                "disk_total": row.get::<_, u64>(7)?,
+                "mem_used": sqlite_u64(row.get::<_, i64>(2)?),
+                "mem_total": sqlite_u64(row.get::<_, i64>(3)?),
+                "swap_used": sqlite_u64(row.get::<_, i64>(4)?),
+                "swap_total": sqlite_u64(row.get::<_, i64>(5)?),
+                "disk_used": sqlite_u64(row.get::<_, i64>(6)?),
+                "disk_total": sqlite_u64(row.get::<_, i64>(7)?),
                 "load_avg1": row.get::<_, f64>(8)?
             }))
         })?;
@@ -390,4 +408,12 @@ impl std::fmt::Display for CleanupStats {
             self.log_lines, self.alerts
         )
     }
+}
+
+fn sqlite_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn sqlite_u64(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or(0)
 }
