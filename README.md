@@ -200,17 +200,20 @@ skip_vmids = []
 [platform]
 enabled = true
 interval_secs = 60
-backup_warning_hours = 48
+backup_warn_hours = 48
 backup_critical_hours = 72
 task_long_running_minutes = 60
-snapshot_warning_days = 7
+snapshot_warn_days = 7
 snapshot_max_count = 5
-zfs_usage_warning_pct = 80.0
-security_checks = true
+zfs_usage_threshold = 80.0
+lvmthin_data_warn_pct = 85.0
+lvmthin_data_critical_pct = 95.0
+lvmthin_metadata_warn_pct = 75.0
+lvmthin_metadata_critical_pct = 90.0
+security_enabled = true
 
 [certificates]
-enabled = true
-warning_days = 30
+warn_days = 30
 critical_days = 7
 
 [[certificates.targets]]
@@ -501,6 +504,10 @@ name = "nextcloud"
 kind = "http_json"
 endpoint_url = "https://nextcloud.example.com/status.php"
 interval_secs = 60
+json_path_mappings = [
+  { json_path = "installed", metric_name = "installed", metric_type = "gauge", label = "Installed", unit = "" },
+  { json_path = "maintenance", metric_name = "maintenance_mode", metric_type = "gauge", label = "Maintenance", unit = "" }
+]
 ```
 
 Supported styles include:
@@ -519,6 +526,7 @@ Use `[[app_logs]]` for app log parsing:
 [[app_logs]]
 enabled = true
 name = "nginx"
+target_vmid = 100
 log_file_path = "/var/log/nginx/access.log"
 log_format = "nginx_combined"
 slow_request_threshold_ms = 1000

@@ -9,8 +9,11 @@
 
 use reqwest::Client;
 use serde::Serialize;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 use tracing::{error, info, warn};
 
@@ -18,9 +21,10 @@ use crate::collectors::logs::LogAlert;
 use crate::config::{AlertConfig, AlertSeverity};
 use crate::proxmox_api::{GuestStatus, NodeStatus};
 use crate::storage::Storage;
-use std::sync::Arc;
 
 const SILENCE_WINDOW: Duration = Duration::from_secs(300); // 5 min dedup
+static SHARED_SILENCE_MAP: Lazy<Arc<Mutex<HashMap<String, Instant>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Alert events
@@ -212,12 +216,15 @@ struct WebhookAlert {
 pub struct AlertDispatcher {
     cfg: AlertConfig,
     http: Option<Client>,
-    silence_map: HashMap<String, Instant>,
+    silence_map: Arc<Mutex<HashMap<String, Instant>>>,
     storage: Option<Arc<Storage>>,
 }
 
 impl AlertDispatcher {
-    pub fn new(cfg: AlertConfig, storage: Option<Arc<Storage>>) -> Self {
+    pub fn new(mut cfg: AlertConfig, storage: Option<Arc<Storage>>) -> Self {
+        if cfg.webhook_url.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            cfg.webhook_url = None;
+        }
         let http = if cfg.enabled {
             cfg.webhook_url.as_ref().map(|_| {
                 Client::builder()
@@ -231,7 +238,7 @@ impl AlertDispatcher {
         Self {
             cfg,
             http,
-            silence_map: HashMap::new(),
+            silence_map: SHARED_SILENCE_MAP.clone(),
             storage,
         }
     }
@@ -241,13 +248,18 @@ impl AlertDispatcher {
         let summary = alert.summary();
         let severity = alert.severity();
 
-        // Deduplication
-        if let Some(last) = self.silence_map.get(&key) {
-            if last.elapsed() < SILENCE_WINDOW {
-                return;
+        // Deduplication is intentionally shared across all dispatcher instances.
+        // Collectors run in separate Tokio tasks, but duplicate alert keys should
+        // still silence globally instead of once per collector.
+        {
+            let mut silence_map = self.silence_map.lock().await;
+            if let Some(last) = silence_map.get(&key) {
+                if last.elapsed() < SILENCE_WINDOW {
+                    return;
+                }
             }
+            silence_map.insert(key.clone(), Instant::now());
         }
-        self.silence_map.insert(key.clone(), Instant::now());
 
         // Always log
         match severity {

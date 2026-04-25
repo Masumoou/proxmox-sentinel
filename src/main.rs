@@ -221,6 +221,10 @@ task_long_running_minutes = 60
 snapshot_warn_days = 7
 snapshot_max_count = 5
 zfs_usage_threshold = 80.0
+lvmthin_data_warn_pct = 85.0
+lvmthin_data_critical_pct = 95.0
+lvmthin_metadata_warn_pct = 75.0
+lvmthin_metadata_critical_pct = 90.0
 security_enabled = true
 
 [certificates]
@@ -308,9 +312,7 @@ async fn run_doctor(config_path: &Path) -> Result<()> {
         .map(|_| "/var/lib/lxc readable".to_string())
         .map_err(Into::into));
 
-    check("bind port", TcpListener::bind((cfg.metrics.listen_addr.as_str(), cfg.metrics.listen_port))
-        .map(|_| format!("{}:{}", cfg.metrics.listen_addr, cfg.metrics.listen_port))
-        .map_err(Into::into));
+    check("bind port", check_port_or_running_sentinel(&cfg).await);
 
     check("systemd service", if Path::new("/etc/systemd/system/proxmox-sentinel.service").exists() {
         Ok("installed".to_string())
@@ -322,6 +324,42 @@ async fn run_doctor(config_path: &Path) -> Result<()> {
         anyhow::bail!("{failures} doctor checks failed");
     }
     Ok(())
+}
+
+async fn check_port_or_running_sentinel(cfg: &Config) -> Result<String> {
+    match TcpListener::bind((cfg.metrics.listen_addr.as_str(), cfg.metrics.listen_port)) {
+        Ok(_) => Ok(format!("{}:{} available", cfg.metrics.listen_addr, cfg.metrics.listen_port)),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            let health_host = if cfg.metrics.listen_addr == "0.0.0.0" || cfg.metrics.listen_addr == "::" {
+                "127.0.0.1"
+            } else {
+                cfg.metrics.listen_addr.as_str()
+            };
+            let url = format!("http://{health_host}:{}/health", cfg.metrics.listen_port);
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()
+                .context("building doctor health client")?;
+            let mut request = client.get(&url);
+            if let Some(auth) = cfg.metrics.auth.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some((user, pass)) = auth.split_once(':') {
+                    request = request.basic_auth(user.to_string(), Some(pass.to_string()));
+                }
+            }
+            let response = request.send().await.with_context(|| format!("checking {url}"))?;
+            if response.status().is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if body.trim() == "OK" {
+                    return Ok(format!(
+                        "{}:{} already in use by running Sentinel (/health OK)",
+                        cfg.metrics.listen_addr, cfg.metrics.listen_port
+                    ));
+                }
+            }
+            anyhow::bail!("{}:{} is already in use, but Sentinel /health did not return OK", cfg.metrics.listen_addr, cfg.metrics.listen_port)
+        }
+        Err(e) => Err(e).with_context(|| format!("binding {}:{}", cfg.metrics.listen_addr, cfg.metrics.listen_port)),
+    }
 }
 
 fn prompt(label: &str, default: &str) -> Result<String> {

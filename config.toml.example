@@ -3,7 +3,7 @@
 
 [proxmox]
 api_url           = "https://10.10.207.1:8006"
-api_token_id      = "sentinel@pam!monitoring"
+api_token_id      = "sentinel@pve!monitoring"
 api_token_secret  = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 nodes             = []          # empty = auto-discover all nodes
 insecure_tls      = true        # Proxmox uses self-signed cert by default
@@ -12,7 +12,7 @@ insecure_tls      = true        # Proxmox uses self-signed cert by default
 listen_addr = "0.0.0.0"
 listen_port = 9101              # Prometheus will scrape :9101/metrics
 prometheus_enabled = true
-auth        = "admin:secret"    # Basic Auth for dashboard + metrics (optional)
+auth        = ""                # Optional Basic Auth. Example: "admin:secret"
 
 [logs]
 tail_lines  = 100               # How many lines to read on initial startup
@@ -139,6 +139,10 @@ task_long_running_minutes = 60
 snapshot_warn_days        = 7
 snapshot_max_count        = 5
 zfs_usage_threshold       = 80.0
+lvmthin_data_warn_pct     = 85.0
+lvmthin_data_critical_pct = 95.0
+lvmthin_metadata_warn_pct = 75.0
+lvmthin_metadata_critical_pct = 90.0
 security_enabled          = true
 
 [certificates]
@@ -156,18 +160,24 @@ critical_days = 7
 # ── Application Metrics (v0.2.0) ─────────────────────────────────────────────
 # Track internal application counters (PHP/Nextcloud/JSON APIs)
 # [[app_metrics]]
-# name      = "Nextcloud"
-# kind      = "nextcloud_occ"
-# vmid      = 100
-# interval  = 60
-# mappings  = [
-#   { json_path = "$.system.mem_free", label = "Free Mem", unit = "bytes" }
+# enabled       = true
+# name          = "Nextcloud"
+# kind          = "http_json"          # nextcloud_occ | http_json | shell_json
+# target_vmid   = 100                  # optional, for nextcloud_occ/shell_json
+# endpoint_url  = "https://nextcloud.example.com/status.php"
+# command       = "/var/www/html/nextcloud/occ"
+# interval_secs = 60
+# json_path_mappings = [
+#   { json_path = "installed", metric_name = "installed", metric_type = "gauge", label = "Installed", unit = "" },
+#   { json_path = "maintenance", metric_name = "maintenance_mode", metric_type = "gauge", label = "Maintenance", unit = "" }
 # ]
 
 # ── Application Log Analysis (v0.2.0) ────────────────────────────────────────
 # Watch specific logs and parse as JSON or Combined Apache format
 # [[app_logs]]
-# name      = "Nginx Access"
-# kind      = "combined"
-# vmid      = 100
-# path      = "/var/log/nginx/access.log"
+# enabled                   = true
+# name                      = "Nginx Access"
+# target_vmid               = 100
+# log_file_path             = "/var/log/nginx/access.log"
+# log_format                = "nginx_combined" # nextcloud_json | nginx_combined | apache_combined
+# slow_request_threshold_ms = 1000

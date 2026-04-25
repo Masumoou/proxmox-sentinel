@@ -379,6 +379,22 @@ static OBJECT_STORAGE_LATENCY_MS: Lazy<GaugeVec> = Lazy::new(|| {
     ).unwrap()
 });
 
+static PLATFORM_HEALTH_STATUS: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_platform_health_status",
+        "Summary health for platform collectors (0=ok, 0.5=info, 1=warning, 2=critical, -1=unknown)",
+        &["component", "name"]
+    ).unwrap()
+});
+
+static PLATFORM_HEALTH_VALUE: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "pve_platform_health_value",
+        "Numeric summary values emitted by platform collectors",
+        &["component", "name", "metric"]
+    ).unwrap()
+});
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Metric update functions
 // ──────────────────────────────────────────────────────────────────────────────
@@ -404,6 +420,22 @@ pub fn update_object_storage(name: &str, up: bool, latency_ms: f64) {
     let status = if up { 1.0 } else { 0.0 };
     OBJECT_STORAGE_UP.with_label_values(&[name]).set(status);
     OBJECT_STORAGE_LATENCY_MS.with_label_values(&[name]).set(latency_ms);
+}
+
+pub fn update_platform_health(component: &str, name: &str, status: &str) {
+    let value = match status {
+        "ok" | "online" | "healthy" | "HEALTH_OK" => 0.0,
+        "info" | "running" => 0.5,
+        "warning" | "HEALTH_WARN" | "degraded" => 1.0,
+        "critical" | "error" | "failed" | "expired" | "HEALTH_ERR" => 2.0,
+        "not-installed" => -1.0,
+        _ => -1.0,
+    };
+    PLATFORM_HEALTH_STATUS.with_label_values(&[component, name]).set(value);
+}
+
+pub fn update_platform_value(component: &str, name: &str, metric: &str, value: f64) {
+    PLATFORM_HEALTH_VALUE.with_label_values(&[component, name, metric]).set(value);
 }
 
 pub fn update_app_metrics(name: &str, metric: &str, value: f64) {
@@ -565,10 +597,6 @@ async fn auth_middleware(
     next: Next,
 ) -> Result<Response, Response> {
     if let Some(ref expected) = state.expected_auth {
-        if req.uri().path() == "/ws" {
-            return Ok(next.run(req).await);
-        }
-
         let auth_header = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).unwrap_or("");
         
         // Use timing-safe compare to prevent timing attacks

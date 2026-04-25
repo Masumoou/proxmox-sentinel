@@ -367,6 +367,14 @@ impl ProxmoxClient {
         })
     }
 
+    /// Check whether QEMU guest agent responds.
+    pub async fn vm_agent_ping(&self, node: &str, vmid: u32) -> Result<()> {
+        let _: serde_json::Value = self
+            .get(&format!("/nodes/{node}/qemu/{vmid}/agent/ping"))
+            .await?;
+        Ok(())
+    }
+
     /// Run a command inside a VM via QEMU guest agent
     pub async fn vm_agent_exec(&self, node: &str, vmid: u32, cmd: &[&str]) -> Result<String> {
         self.vm_agent_exec_command(node, vmid, cmd.join(" ")).await
@@ -444,6 +452,20 @@ impl ProxmoxClient {
                 kind: s.kind.unwrap_or_default(),
             })
             .collect())
+    }
+
+    /// List storage content rows for a content type such as "backup" or "iso".
+    pub async fn storage_content(&self, node: &str, storage: &str, content: &str) -> Result<Vec<serde_json::Value>> {
+        self.get(&format!("/nodes/{node}/storage/{storage}/content?content={content}")).await
+    }
+
+    /// List snapshots using Proxmox API metadata. This is preferred over parsing qm/pct text output.
+    pub async fn guest_snapshots(&self, node: &str, kind: &GuestKind, vmid: u32) -> Result<Vec<serde_json::Value>> {
+        let guest_type = match kind {
+            GuestKind::Vm => "qemu",
+            GuestKind::Lxc => "lxc",
+        };
+        self.get(&format!("/nodes/{node}/{guest_type}/{vmid}/snapshot")).await
     }
 
     // ── Cluster ───────────────────────────────────────────────────────────────

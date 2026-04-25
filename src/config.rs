@@ -79,6 +79,7 @@ impl Config {
                 anyhow::bail!("intelligence.target_free_mem_pct must be between 0 and 100");
             }
         }
+        self.platform.validate()?;
         Ok(())
     }
 }
@@ -254,6 +255,14 @@ pub struct PlatformConfig {
     pub snapshot_max_count: usize,
     #[serde(default = "default_zfs_usage_threshold")]
     pub zfs_usage_threshold: f64,
+    #[serde(default = "default_lvmthin_data_warn_pct")]
+    pub lvmthin_data_warn_pct: f64,
+    #[serde(default = "default_lvmthin_data_critical_pct")]
+    pub lvmthin_data_critical_pct: f64,
+    #[serde(default = "default_lvmthin_metadata_warn_pct")]
+    pub lvmthin_metadata_warn_pct: f64,
+    #[serde(default = "default_lvmthin_metadata_critical_pct")]
+    pub lvmthin_metadata_critical_pct: f64,
     #[serde(default = "default_security_enabled")]
     pub security_enabled: bool,
 }
@@ -269,8 +278,29 @@ impl Default for PlatformConfig {
             snapshot_warn_days: default_snapshot_warn_days(),
             snapshot_max_count: default_snapshot_max_count(),
             zfs_usage_threshold: default_zfs_usage_threshold(),
+            lvmthin_data_warn_pct: default_lvmthin_data_warn_pct(),
+            lvmthin_data_critical_pct: default_lvmthin_data_critical_pct(),
+            lvmthin_metadata_warn_pct: default_lvmthin_metadata_warn_pct(),
+            lvmthin_metadata_critical_pct: default_lvmthin_metadata_critical_pct(),
             security_enabled: default_security_enabled(),
         }
+    }
+}
+
+impl PlatformConfig {
+    pub fn validate(&self) -> Result<()> {
+        validate_pct("platform.zfs_usage_threshold", self.zfs_usage_threshold)?;
+        validate_pct("platform.lvmthin_data_warn_pct", self.lvmthin_data_warn_pct)?;
+        validate_pct("platform.lvmthin_data_critical_pct", self.lvmthin_data_critical_pct)?;
+        validate_pct("platform.lvmthin_metadata_warn_pct", self.lvmthin_metadata_warn_pct)?;
+        validate_pct("platform.lvmthin_metadata_critical_pct", self.lvmthin_metadata_critical_pct)?;
+        if self.lvmthin_data_warn_pct > self.lvmthin_data_critical_pct {
+            anyhow::bail!("platform.lvmthin_data_warn_pct must be <= lvmthin_data_critical_pct");
+        }
+        if self.lvmthin_metadata_warn_pct > self.lvmthin_metadata_critical_pct {
+            anyhow::bail!("platform.lvmthin_metadata_warn_pct must be <= lvmthin_metadata_critical_pct");
+        }
+        Ok(())
     }
 }
 
@@ -282,7 +312,18 @@ fn default_task_long_running_minutes() -> u64 { 60 }
 fn default_snapshot_warn_days() -> u64 { 7 }
 fn default_snapshot_max_count() -> usize { 5 }
 fn default_zfs_usage_threshold() -> f64 { 80.0 }
+fn default_lvmthin_data_warn_pct() -> f64 { 85.0 }
+fn default_lvmthin_data_critical_pct() -> f64 { 95.0 }
+fn default_lvmthin_metadata_warn_pct() -> f64 { 75.0 }
+fn default_lvmthin_metadata_critical_pct() -> f64 { 90.0 }
 fn default_security_enabled() -> bool { true }
+
+fn validate_pct(name: &str, value: f64) -> Result<()> {
+    if !(0.0..=100.0).contains(&value) {
+        anyhow::bail!("{name} must be between 0 and 100");
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CertificateConfig {

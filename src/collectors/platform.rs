@@ -5,12 +5,14 @@ use anyhow::Result;
 use reqwest::Url;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::process::Command;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 use tracing::{debug, warn};
+use std::process::Stdio;
 
 #[derive(Debug, Clone, Serialize)]
 struct ZfsPool {
@@ -35,6 +37,17 @@ struct BackupHealth {
     age_hours: Option<i64>,
     status: String,
     task_status: String,
+    size_bytes: Option<u64>,
+    source: String,
+}
+
+#[derive(Debug, Clone)]
+struct BackupArtifact {
+    vmid: u32,
+    node: String,
+    storage: String,
+    volid: String,
+    ctime: i64,
     size_bytes: Option<u64>,
 }
 
@@ -67,6 +80,15 @@ struct SnapshotInfo {
     description: String,
     created_ts: Option<i64>,
     age_days: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GuestAgentHealth {
+    vmid: u32,
+    name: String,
+    node: String,
+    status: String,
+    detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -136,16 +158,30 @@ pub async fn run_collector(
         let tasks = collect_tasks(&cfg, &mut alerts).await;
         let cluster = collect_cluster().await;
         let ceph = collect_ceph(&mut alerts).await;
-        let thin_pools = collect_thin_pools(&mut alerts).await;
+        let thin_pools = collect_thin_pools(&cfg, &mut alerts).await;
         let guests = collect_all_guests(client.clone(), nodes.clone()).await;
-        let backups = collect_backups(&cfg, &guests, &tasks, &mut alerts).await;
-        let snapshots = collect_snapshots(&cfg, &guests, &mut alerts).await;
+        let guest_agents = collect_guest_agent_health(client.clone(), &guests, &mut alerts).await;
+        let backup_artifacts = collect_backup_artifacts(client.clone(), nodes.clone()).await;
+        let backups = collect_backups(&cfg, &guests, &tasks, &backup_artifacts, &mut alerts).await;
+        let snapshots = collect_snapshots(&cfg, client.clone(), &guests, &mut alerts).await;
         let security = if cfg.security_enabled {
-            collect_security(&guests, &mut alerts).await
+            collect_security(&guest_agents, &mut alerts).await
         } else {
             Vec::new()
         };
         let certificates = collect_certs(&cert_cfg, &mut alerts).await;
+        update_platform_metrics(
+            &zfs,
+            &backups,
+            &tasks,
+            &cluster,
+            &ceph,
+            &thin_pools,
+            &snapshots,
+            &security,
+            &certificates,
+            &guest_agents,
+        );
 
         for alert in alerts {
             dispatcher.dispatch(alert).await;
@@ -163,6 +199,7 @@ pub async fn run_collector(
             "snapshots": snapshots,
             "security": security,
             "certificates": certificates,
+            "guest_agents": guest_agents,
         }).to_string());
     }
 }
@@ -185,109 +222,62 @@ async fn collect_zfs(cfg: &PlatformConfig, alerts: &mut Vec<Alert>) -> Vec<ZfsPo
         return Vec::new();
     };
 
-    let mut pools = Vec::new();
-    for line in list.lines() {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 3 {
-            continue;
-        }
-        let name = cols[0].to_string();
-        let state = cols[1].to_string();
-        let capacity_pct = pct_text(cols[2]);
-        let fragmentation_pct = cols.get(3).map(|v| pct_text(v));
-        let block = pool_status_block(&status, &name);
-        let scrub = parse_scrub(&block);
-        let errors = parse_errors(&block);
-        let (read_errors, write_errors, checksum_errors) = parse_vdev_errors(&block);
-
-        if state != "ONLINE" {
+    let pools = parse_zfs_pools(&list, &status);
+    for pool in &pools {
+        if pool.state != "ONLINE" {
             alerts.push(platform_alert(
-                format!("zfs_state:{name}"),
+                format!("zfs_state:{}", pool.name),
                 "critical",
-                format!("ZFS pool {name} is {state}"),
+                format!("ZFS pool {} is {}", pool.name, pool.state),
             ));
         }
-        if capacity_pct >= cfg.zfs_usage_threshold {
+        if pool.capacity_pct >= cfg.zfs_usage_threshold {
             alerts.push(platform_alert(
-                format!("zfs_usage:{name}"),
-                if capacity_pct >= 95.0 { "critical" } else { "warning" },
-                format!("ZFS pool {name} usage at {capacity_pct:.1}%"),
+                format!("zfs_usage:{}", pool.name),
+                if pool.capacity_pct >= 95.0 { "critical" } else { "warning" },
+                format!("ZFS pool {} usage at {:.1}%", pool.name, pool.capacity_pct),
             ));
         }
-        if checksum_errors > 0 || read_errors > 0 || write_errors > 0 {
+        if pool.checksum_errors > 0 || pool.read_errors > 0 || pool.write_errors > 0 {
             alerts.push(platform_alert(
-                format!("zfs_errors:{name}"),
+                format!("zfs_errors:{}", pool.name),
                 "critical",
-                format!("ZFS pool {name} has device errors: read={read_errors} write={write_errors} checksum={checksum_errors}"),
+                format!(
+                    "ZFS pool {} has device errors: read={} write={} checksum={}",
+                    pool.name, pool.read_errors, pool.write_errors, pool.checksum_errors
+                ),
             ));
         }
-        if scrub.to_lowercase().contains("repaired") && !scrub.contains("0B") {
+        if scrub_has_errors(&pool.scrub) {
             alerts.push(platform_alert(
-                format!("zfs_scrub:{name}"),
+                format!("zfs_scrub:{}", pool.name),
                 "warning",
-                format!("ZFS pool {name} scrub reported repairs: {scrub}"),
+                format!("ZFS pool {} scrub reported errors: {}", pool.name, pool.scrub),
             ));
         }
-
-        pools.push(ZfsPool {
-            name,
-            state,
-            capacity_pct,
-            fragmentation_pct,
-            scrub,
-            errors,
-            read_errors,
-            write_errors,
-            checksum_errors,
-        });
     }
     pools
 }
 
 async fn collect_tasks(cfg: &PlatformConfig, alerts: &mut Vec<Alert>) -> Vec<TaskHealth> {
     let out = run_cmd("pvesh", &["get", "/cluster/tasks", "--output-format", "json"]).await.unwrap_or_default();
-    let value: Value = serde_json::from_str(&out).unwrap_or(Value::Null);
-    let Some(rows) = value.as_array() else {
-        return Vec::new();
-    };
     let now = chrono::Utc::now().timestamp();
-    let mut tasks = Vec::new();
-    for row in rows.iter().take(250) {
-        let worker_type = str_field(row, "type").or_else(|| str_field(row, "worker_type")).unwrap_or_default();
-        let status = str_field(row, "status").unwrap_or_else(|| if row.get("endtime").is_some() { "unknown".into() } else { "running".into() });
-        let start_time = int_field(row, "starttime").unwrap_or(0);
-        let end_time = int_field(row, "endtime");
-        let duration_secs = end_time.unwrap_or(now).saturating_sub(start_time);
-        let upid = str_field(row, "upid").unwrap_or_default();
-        let vmid = int_field(row, "id").and_then(|v| u32::try_from(v).ok());
-        let node = str_field(row, "node").unwrap_or_default();
-
-        if status.to_lowercase().contains("error") || status.to_lowercase().contains("fail") {
+    let tasks = parse_tasks_json(&out, now);
+    for task in &tasks {
+        if task.status.to_lowercase().contains("error") || task.status.to_lowercase().contains("fail") {
             alerts.push(platform_alert(
-                format!("task_failed:{upid}"),
+                format!("task_failed:{}", task.upid),
                 "critical",
-                format!("Proxmox task {worker_type} failed on {node}: {status}"),
+                format!("Proxmox task {} failed on {}: {}", task.worker_type, task.node, task.status),
             ));
         }
-        if end_time.is_none() && duration_secs > (cfg.task_long_running_minutes as i64 * 60) {
+        if task.end_time.is_none() && task.duration_secs > (cfg.task_long_running_minutes as i64 * 60) {
             alerts.push(platform_alert(
-                format!("task_long:{upid}"),
+                format!("task_long:{}", task.upid),
                 "warning",
-                format!("Proxmox task {worker_type} on {node} has been running for {} minutes", duration_secs / 60),
+                format!("Proxmox task {} on {} has been running for {} minutes", task.worker_type, task.node, task.duration_secs / 60),
             ));
         }
-
-        tasks.push(TaskHealth {
-            upid,
-            node,
-            worker_type,
-            vmid,
-            user: str_field(row, "user").unwrap_or_default(),
-            status,
-            start_time,
-            end_time,
-            duration_secs,
-        });
     }
     tasks
 }
@@ -296,44 +286,57 @@ async fn collect_backups(
     cfg: &PlatformConfig,
     guests: &[crate::proxmox_api::GuestStatus],
     tasks: &[TaskHealth],
+    artifacts: &[BackupArtifact],
     alerts: &mut Vec<Alert>,
 ) -> Vec<BackupHealth> {
     let now = chrono::Utc::now().timestamp();
-    let mut latest: HashMap<u32, &TaskHealth> = HashMap::new();
+    let mut latest_artifact: HashMap<u32, &BackupArtifact> = HashMap::new();
+    let mut latest_task: HashMap<u32, &TaskHealth> = HashMap::new();
+
+    for artifact in artifacts {
+        let replace = latest_artifact
+            .get(&artifact.vmid)
+            .map(|old| artifact.ctime > old.ctime)
+            .unwrap_or(true);
+        if replace {
+            latest_artifact.insert(artifact.vmid, artifact);
+        }
+    }
 
     for task in tasks {
-        if !matches!(task.worker_type.as_str(), "vzdump" | "backup" | "pbs") {
+        if !is_backup_task(&task.worker_type) {
             continue;
         }
         if let Some(vmid) = task.vmid {
-            let replace = latest
+            let replace = latest_task
                 .get(&vmid)
                 .map(|old| task.start_time > old.start_time)
                 .unwrap_or(true);
             if replace {
-                latest.insert(vmid, task);
+                latest_task.insert(vmid, task);
             }
         }
     }
 
     let mut rows = Vec::new();
     for guest in guests {
-        let task = latest.get(&guest.vmid).copied();
-        let last_backup_ts = task.map(|t| t.end_time.unwrap_or(t.start_time));
+        let artifact = latest_artifact.get(&guest.vmid).copied();
+        let task = latest_task.get(&guest.vmid).copied();
+        let last_backup_ts = artifact.map(|a| a.ctime);
         let age_hours = last_backup_ts.map(|ts| (now.saturating_sub(ts)) / 3600);
-        let status = match (task, age_hours) {
-            (Some(t), _) if t.status.to_lowercase().contains("error") || t.status.to_lowercase().contains("fail") => "critical",
-            (_, Some(age)) if age >= cfg.backup_critical_hours as i64 => "critical",
-            (_, Some(age)) if age >= cfg.backup_warn_hours as i64 => "warning",
-            (Some(_), _) => "ok",
-            (None, _) => "critical",
+        let latest_task_status = task.map(|t| t.status.clone()).unwrap_or_else(|| "none".to_string());
+        let status = match age_hours {
+            Some(age) if age >= cfg.backup_critical_hours as i64 => "critical",
+            Some(age) if age >= cfg.backup_warn_hours as i64 => "warning",
+            Some(_) => "ok",
+            None => "critical",
         }.to_string();
 
         if status != "ok" {
             let summary = if let Some(age) = age_hours {
-                format!("Guest {} ({}) backup age is {age}h", guest.name, guest.vmid)
+                format!("Guest {} ({}) latest backup artifact is {age}h old", guest.name, guest.vmid)
             } else {
-                format!("Guest {} ({}) has no known backup task", guest.name, guest.vmid)
+                format!("Guest {} ({}) has no backup artifact found", guest.name, guest.vmid)
             };
             alerts.push(platform_alert(format!("backup:{}:{}", guest.vmid, status), &status, summary));
         }
@@ -346,11 +349,56 @@ async fn collect_backups(
             last_backup_ts,
             age_hours,
             status,
-            task_status: task.map(|t| t.status.clone()).unwrap_or_else(|| "never".to_string()),
-            size_bytes: None,
+            task_status: latest_task_status,
+            size_bytes: artifact.and_then(|a| a.size_bytes),
+            source: artifact
+                .map(|a| format!("{}:{} ({})", a.node, a.storage, a.volid))
+                .unwrap_or_else(|| "none".to_string()),
         });
     }
     rows
+}
+
+async fn collect_backup_artifacts(
+    client: Arc<ProxmoxClient>,
+    nodes: Arc<Vec<String>>,
+) -> Vec<BackupArtifact> {
+    let mut artifacts = Vec::new();
+
+    for node in nodes.iter() {
+        let storages = match client.storage_status(node).await {
+            Ok(storages) => storages,
+            Err(e) => {
+                debug!("backup storage list {node}: {e}");
+                continue;
+            }
+        };
+
+        for storage in storages
+            .iter()
+            .filter(|s| s.enabled && s.active && s.content.split(',').any(|c| c.trim() == "backup"))
+        {
+            match client.storage_content(node, &storage.storage, "backup").await {
+                Ok(rows) => {
+                    artifacts.extend(rows.iter().filter_map(|row| parse_backup_artifact(row, node, &storage.storage)));
+                }
+                Err(e) => debug!("backup content {node}/{}: {e}", storage.storage),
+            }
+        }
+    }
+
+    artifacts.extend(scan_local_backup_artifacts().await);
+
+    let mut dedup: HashMap<String, BackupArtifact> = HashMap::new();
+    for artifact in artifacts {
+        let key = if artifact.volid.is_empty() {
+            format!("{}:{}:{}", artifact.node, artifact.vmid, artifact.ctime)
+        } else {
+            artifact.volid.clone()
+        };
+        dedup.entry(key).or_insert(artifact);
+    }
+    dedup.into_values().collect()
 }
 
 async fn collect_cluster() -> ClusterHealth {
@@ -400,7 +448,7 @@ async fn collect_certs(cfg: &CertificateConfig, alerts: &mut Vec<Alert>) -> Vec<
 }
 
 async fn collect_security(
-    guests: &[crate::proxmox_api::GuestStatus],
+    guest_agents: &[GuestAgentHealth],
     alerts: &mut Vec<Alert>,
 ) -> Vec<SecurityCheck> {
     let mut checks = Vec::new();
@@ -439,15 +487,15 @@ async fn collect_security(
         "Node firewall status",
     ));
 
-    let no_agent = guests
+    let no_agent = guest_agents
         .iter()
-        .filter(|g| matches!(g.kind, GuestKind::Vm) && g.status == "running")
+        .filter(|g| g.status != "ok")
         .count();
     checks.push(security_check(
         "guest_agent_visibility",
         "Guest visibility",
         if no_agent > 0 { "info" } else { "ok" },
-        &format!("{no_agent} running QEMU guests require guest-agent/SSH for deep service visibility"),
+        &format!("{no_agent} running QEMU guests have guest agent missing or not responding"),
         "Visibility posture",
     ));
 
@@ -463,32 +511,57 @@ async fn collect_security(
     checks
 }
 
+async fn collect_guest_agent_health(
+    client: Arc<ProxmoxClient>,
+    guests: &[crate::proxmox_api::GuestStatus],
+    alerts: &mut Vec<Alert>,
+) -> Vec<GuestAgentHealth> {
+    let mut rows = Vec::new();
+    for guest in guests
+        .iter()
+        .filter(|g| matches!(g.kind, GuestKind::Vm) && g.status == "running")
+    {
+        let (status, detail) = match client.vm_agent_ping(&guest.node, guest.vmid).await {
+            Ok(()) => ("ok".to_string(), "guest agent ping OK".to_string()),
+            Err(e) => ("warning".to_string(), e.to_string()),
+        };
+
+        if status != "ok" {
+            alerts.push(platform_alert(
+                format!("guest_agent:{}:{}", guest.node, guest.vmid),
+                "warning",
+                format!("QEMU guest agent not responding for {} ({}) on {}: {}", guest.name, guest.vmid, guest.node, detail),
+            ));
+        }
+
+        rows.push(GuestAgentHealth {
+            vmid: guest.vmid,
+            name: guest.name.clone(),
+            node: guest.node.clone(),
+            status,
+            detail,
+        });
+    }
+    rows
+}
+
 async fn collect_snapshots(
     cfg: &PlatformConfig,
+    client: Arc<ProxmoxClient>,
     guests: &[crate::proxmox_api::GuestStatus],
     alerts: &mut Vec<Alert>,
 ) -> Vec<SnapshotHealth> {
     let now = chrono::Utc::now().timestamp();
     let mut rows = Vec::new();
     for guest in guests {
-        let cmd = match guest.kind { GuestKind::Vm => "qm", GuestKind::Lxc => "pct" };
-        let out = run_cmd(cmd, &["listsnapshot", &guest.vmid.to_string()]).await.unwrap_or_default();
-        let snapshots: Vec<SnapshotInfo> = out
-            .lines()
-            .filter(|line| !line.contains("current") && !line.trim().is_empty() && !line.contains("Name"))
-            .filter_map(|line| {
-                let name = line
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim_matches(|c| c == '`' || c == '-' || c == '>' || c == '|')
-                    .to_string();
-                if name.is_empty() || name == "current" {
-                    return None;
-                }
-                Some(SnapshotInfo { name, description: line.trim().to_string(), created_ts: None, age_days: None })
-            })
-            .collect();
+        let api_rows = match client.guest_snapshots(&guest.node, &guest.kind, guest.vmid).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                debug!("snapshot API {} {}: {e}", guest.node, guest.vmid);
+                continue;
+            }
+        };
+        let snapshots = parse_snapshot_api_rows(&api_rows, now);
         if snapshots.len() > cfg.snapshot_max_count {
             alerts.push(platform_alert(
                 format!("snap_count:{}", guest.vmid),
@@ -545,25 +618,29 @@ async fn collect_ceph(alerts: &mut Vec<Alert>) -> CephHealth {
     }
 }
 
-async fn collect_thin_pools(alerts: &mut Vec<Alert>) -> Vec<ThinPoolHealth> {
+async fn collect_thin_pools(cfg: &PlatformConfig, alerts: &mut Vec<Alert>) -> Vec<ThinPoolHealth> {
     let out = run_cmd("lvs", &["--reportformat", "json", "-o", "vg_name,lv_name,lv_attr,data_percent,metadata_percent"]).await.unwrap_or_default();
-    let value: Value = serde_json::from_str(&out).unwrap_or(Value::Null);
-    let rows = value.pointer("/report/0/lv").and_then(Value::as_array).cloned().unwrap_or_default();
-    rows.into_iter().filter_map(|row| {
-        let attr = str_field(&row, "lv_attr").unwrap_or_default();
-        if !attr.starts_with('t') {
-            return None;
+    let pools = parse_lvmthin_json(&out, cfg);
+    for pool in &pools {
+        if pool.status != "ok" {
+            alerts.push(platform_alert(
+                format!("thin:{}/{}", pool.vg, pool.lv),
+                &pool.status,
+                format!("LVM-thin {}/{}: data {:.1}%, metadata {:.1}%", pool.vg, pool.lv, pool.data_pct, pool.meta_pct),
+            ));
         }
-        let vg = str_field(&row, "vg_name").unwrap_or_default();
-        let lv = str_field(&row, "lv_name").unwrap_or_default();
-        let data_pct = str_field(&row, "data_percent").and_then(|s| s.parse().ok()).unwrap_or(0.0);
-        let meta_pct = str_field(&row, "metadata_percent").and_then(|s| s.parse().ok()).unwrap_or(0.0);
-        let status = if data_pct >= 95.0 || meta_pct >= 90.0 { "critical" } else if data_pct >= 85.0 || meta_pct >= 75.0 { "warning" } else { "ok" }.to_string();
-        if status != "ok" {
-            alerts.push(platform_alert(format!("thin:{vg}/{lv}"), &status, format!("LVM-thin {vg}/{lv}: data {data_pct:.1}%, metadata {meta_pct:.1}%")));
-        }
-        Some(ThinPoolHealth { vg, lv, data_pct, meta_pct, status })
-    }).collect()
+    }
+    pools
+}
+
+fn classify_lvmthin_status(data_pct: f64, meta_pct: f64, cfg: &PlatformConfig) -> String {
+    (if data_pct >= cfg.lvmthin_data_critical_pct || meta_pct >= cfg.lvmthin_metadata_critical_pct {
+        "critical"
+    } else if data_pct >= cfg.lvmthin_data_warn_pct || meta_pct >= cfg.lvmthin_metadata_warn_pct {
+        "warning"
+    } else {
+        "ok"
+    }).to_string()
 }
 
 async fn check_local_cert(name: &str, cfg: &CertificateConfig) -> CertCheck {
@@ -576,14 +653,25 @@ async fn check_remote_cert(name: &str, url: &str, cfg: &CertificateConfig) -> Ce
     let Ok(parsed) = parsed else {
         return CertCheck { name: name.into(), url: url.into(), status: "critical".into(), days_remaining: None, expires_at: None, detail: "invalid URL".into() };
     };
+    if parsed.scheme() != "https" {
+        return CertCheck { name: name.into(), url: url.into(), status: "unknown".into(), days_remaining: None, expires_at: None, detail: "certificate checks require https URL".into() };
+    }
     let Some(host) = parsed.host_str() else {
         return CertCheck { name: name.into(), url: url.into(), status: "critical".into(), days_remaining: None, expires_at: None, detail: "missing host".into() };
     };
     let port = parsed.port_or_known_default().unwrap_or(443).to_string();
     let connect = format!("{host}:{port}");
-    let cmd = format!("echo | openssl s_client -servername {} -connect {} 2>/dev/null | openssl x509 -noout -enddate", shell_arg(host), shell_arg(&connect));
-    let out = run_shell(&cmd).await.unwrap_or_default();
-    cert_from_not_after(name, url, &out, cfg)
+    match fetch_remote_cert_enddate(host, &connect).await {
+        Ok(out) => cert_from_not_after(name, url, &out, cfg),
+        Err(e) => CertCheck {
+            name: name.into(),
+            url: url.into(),
+            status: "critical".into(),
+            days_remaining: None,
+            expires_at: None,
+            detail: format!("certificate probe failed: {e}"),
+        },
+    }
 }
 
 fn cert_from_not_after(name: &str, url: &str, out: &str, cfg: &CertificateConfig) -> CertCheck {
@@ -591,8 +679,14 @@ fn cert_from_not_after(name: &str, url: &str, out: &str, cfg: &CertificateConfig
     if raw.is_empty() {
         return CertCheck { name: name.into(), url: url.into(), status: "unknown".into(), days_remaining: None, expires_at: None, detail: "certificate expiry unavailable".into() };
     }
-    let parsed = chrono::DateTime::parse_from_str(raw, "%b %e %H:%M:%S %Y %Z").ok();
-    let days = parsed.map(|dt| (dt.timestamp() - chrono::Utc::now().timestamp()) / 86400);
+    let parsed_ts = chrono::DateTime::parse_from_str(raw, "%b %e %H:%M:%S %Y %Z")
+        .map(|dt| dt.timestamp())
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(raw, "%b %e %H:%M:%S %Y GMT")
+                .map(|dt| dt.and_utc().timestamp())
+        })
+        .ok();
+    let days = parsed_ts.map(|ts| (ts - chrono::Utc::now().timestamp()) / 86400);
     let status = match days {
         Some(d) if d < 0 => "critical",
         Some(d) if d <= cfg.critical_days as i64 => "critical",
@@ -605,7 +699,7 @@ fn cert_from_not_after(name: &str, url: &str, out: &str, cfg: &CertificateConfig
         url: url.into(),
         status,
         days_remaining: days,
-        expires_at: parsed.map(|d| d.to_rfc3339()),
+        expires_at: parsed_ts.and_then(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).map(|d| d.to_rfc3339())),
         detail: raw.into(),
     }
 }
@@ -645,12 +739,73 @@ async fn run_cmd(cmd: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-async fn run_shell(script: &str) -> Result<String> {
-    run_cmd("sh", &["-lc", script]).await
+async fn run_cmd_stdin(cmd: &str, args: &[&str], stdin_data: &[u8]) -> Result<String> {
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(stdin_data).await?;
+    }
+
+    let out = child.wait_with_output().await?;
+    if !out.status.success() {
+        anyhow::bail!("{} failed: {}", cmd, String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+async fn fetch_remote_cert_enddate(host: &str, connect: &str) -> Result<String> {
+    let chain = run_cmd_stdin(
+        "openssl",
+        &["s_client", "-servername", host, "-connect", connect, "-showcerts"],
+        b"\n",
+    ).await?;
+    let pem = extract_first_pem_cert(&chain).ok_or_else(|| anyhow::anyhow!("no PEM certificate in s_client output"))?;
+    run_cmd_stdin("openssl", &["x509", "-noout", "-enddate"], pem.as_bytes()).await
+}
+
+fn extract_first_pem_cert(text: &str) -> Option<String> {
+    let begin = text.find("-----BEGIN CERTIFICATE-----")?;
+    let end = text[begin..].find("-----END CERTIFICATE-----")? + begin + "-----END CERTIFICATE-----".len();
+    Some(format!("{}\n", &text[begin..end]))
 }
 
 fn pct_text(value: &str) -> f64 {
     value.trim().trim_end_matches('%').trim_end_matches('-').parse().unwrap_or(0.0)
+}
+
+fn parse_zfs_pools(list: &str, status: &str) -> Vec<ZfsPool> {
+    let mut pools = Vec::new();
+    for line in list.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        let name = cols[0].to_string();
+        let state = cols[1].to_string();
+        let capacity_pct = pct_text(cols[2]);
+        let fragmentation_pct = cols.get(3).map(|v| pct_text(v));
+        let block = pool_status_block(status, &name);
+        let scrub = parse_scrub(&block);
+        let errors = parse_errors(&block);
+        let (read_errors, write_errors, checksum_errors) = parse_vdev_errors(&block);
+        pools.push(ZfsPool {
+            name,
+            state,
+            capacity_pct,
+            fragmentation_pct,
+            scrub,
+            errors,
+            read_errors,
+            write_errors,
+            checksum_errors,
+        });
+    }
+    pools
 }
 
 fn pool_status_block(status: &str, pool: &str) -> String {
@@ -658,7 +813,14 @@ fn pool_status_block(status: &str, pool: &str) -> String {
     let mut lines = Vec::new();
     for line in status.lines() {
         if line.trim_start().starts_with("pool:") {
-            capture = line.contains(pool);
+            if capture {
+                break;
+            }
+            capture = line
+                .trim_start()
+                .strip_prefix("pool:")
+                .map(|name| name.trim() == pool)
+                .unwrap_or(false);
         }
         if capture {
             lines.push(line);
@@ -689,13 +851,248 @@ fn parse_vdev_errors(block: &str) -> (u64, u64, u64) {
     let mut cksum = 0;
     for line in block.lines() {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() >= 5 && cols[1].chars().all(|c| c.is_ascii_digit()) && cols[2].chars().all(|c| c.is_ascii_digit()) {
-            read += cols.get(cols.len().saturating_sub(3)).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-            write += cols.get(cols.len().saturating_sub(2)).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-            cksum += cols.last().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+        if cols.len() < 5 || cols[0] == "NAME" {
+            continue;
         }
+        let Some(state) = cols.get(1) else {
+            continue;
+        };
+        if !matches!(*state, "ONLINE" | "DEGRADED" | "FAULTED" | "OFFLINE" | "UNAVAIL" | "REMOVED") {
+            continue;
+        }
+        read = read.max(cols.get(cols.len().saturating_sub(3)).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0));
+        write = write.max(cols.get(cols.len().saturating_sub(2)).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0));
+        cksum = cksum.max(cols.last().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0));
     }
     (read, write, cksum)
+}
+
+fn scrub_has_errors(scrub: &str) -> bool {
+    let lower = scrub.to_lowercase();
+    if lower.contains("with 0 errors") && (lower.contains("repaired 0b") || lower.contains("repaired 0 bytes")) {
+        return false;
+    }
+    lower.contains("with ") && lower.contains(" errors") && !lower.contains("with 0 errors")
+        || lower.contains("repaired") && !lower.contains("repaired 0b") && !lower.contains("repaired 0 bytes")
+}
+
+fn parse_tasks_json(out: &str, now: i64) -> Vec<TaskHealth> {
+    let value: Value = serde_json::from_str(out).unwrap_or(Value::Null);
+    let Some(rows) = value.as_array() else {
+        return Vec::new();
+    };
+    rows.iter().take(250).map(|row| {
+        let worker_type = str_field(row, "type").or_else(|| str_field(row, "worker_type")).unwrap_or_default();
+        let status = str_field(row, "status").unwrap_or_else(|| if row.get("endtime").is_some() { "unknown".into() } else { "running".into() });
+        let start_time = int_field(row, "starttime").unwrap_or(0);
+        let end_time = int_field(row, "endtime");
+        let duration_secs = end_time.unwrap_or(now).saturating_sub(start_time);
+        TaskHealth {
+            upid: str_field(row, "upid").unwrap_or_default(),
+            node: str_field(row, "node").unwrap_or_default(),
+            worker_type,
+            vmid: int_field(row, "id").and_then(|v| u32::try_from(v).ok()),
+            user: str_field(row, "user").unwrap_or_default(),
+            status,
+            start_time,
+            end_time,
+            duration_secs,
+        }
+    }).collect()
+}
+
+fn is_backup_task(worker_type: &str) -> bool {
+    matches!(worker_type, "vzdump" | "backup" | "pbs") || worker_type.contains("backup")
+}
+
+fn parse_backup_artifact(row: &Value, node: &str, storage: &str) -> Option<BackupArtifact> {
+    let volid = str_field(row, "volid").or_else(|| str_field(row, "volume")).unwrap_or_default();
+    let vmid = int_field(row, "vmid")
+        .and_then(|v| u32::try_from(v).ok())
+        .or_else(|| parse_vmid_from_backup_name(&volid))?;
+    let ctime = int_field(row, "ctime").or_else(|| parse_backup_timestamp(&volid)).unwrap_or(0);
+    Some(BackupArtifact {
+        vmid,
+        node: node.to_string(),
+        storage: storage.to_string(),
+        volid,
+        ctime,
+        size_bytes: int_field(row, "size").and_then(|v| u64::try_from(v).ok()),
+    })
+}
+
+async fn scan_local_backup_artifacts() -> Vec<BackupArtifact> {
+    let mut artifacts = Vec::new();
+    for dir in ["/var/lib/vz/dump", "/mnt/pve"] {
+        scan_backup_dir(dir, &mut artifacts).await;
+    }
+    artifacts
+}
+
+async fn scan_backup_dir(path: &str, artifacts: &mut Vec<BackupArtifact>) {
+    let mut stack = vec![std::path::PathBuf::from(path)];
+    while let Some(dir) = stack.pop() {
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let file_type = match entry.file_type().await {
+                Ok(file_type) => file_type,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                if path.file_name().and_then(|n| n.to_str()) == Some("dump")
+                    || dir.as_path() == std::path::Path::new("/mnt/pve")
+                {
+                    stack.push(path);
+                }
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("vzdump-") {
+                continue;
+            }
+            let Some(vmid) = parse_vmid_from_backup_name(name) else {
+                continue;
+            };
+            let metadata = entry.metadata().await.ok();
+            artifacts.push(BackupArtifact {
+                vmid,
+                node: "local".to_string(),
+                storage: "local-scan".to_string(),
+                volid: path.display().to_string(),
+                ctime: parse_backup_timestamp(name)
+                    .or_else(|| metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64))
+                    .unwrap_or(0),
+                size_bytes: metadata.map(|m| m.len()),
+            });
+        }
+    }
+}
+
+fn parse_vmid_from_backup_name(name: &str) -> Option<u32> {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    let parts: Vec<&str> = file.split('-').collect();
+    if parts.len() < 3 || parts[0] != "vzdump" {
+        return None;
+    }
+    parts[2].parse().ok()
+}
+
+fn parse_backup_timestamp(name: &str) -> Option<i64> {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    let parts: Vec<&str> = file.split('-').collect();
+    if parts.len() < 5 || parts[0] != "vzdump" {
+        return None;
+    }
+    let raw = format!("{}-{}", parts[3], parts[4]);
+    let trimmed = raw
+        .trim_end_matches(".vma.zst")
+        .trim_end_matches(".vma.lzo")
+        .trim_end_matches(".vma.gz")
+        .trim_end_matches(".tar.zst")
+        .trim_end_matches(".tar.lzo")
+        .trim_end_matches(".tar.gz");
+    chrono::NaiveDateTime::parse_from_str(trimmed, "%Y_%m_%d-%H_%M_%S")
+        .ok()
+        .map(|dt| dt.and_utc().timestamp())
+}
+
+fn parse_snapshot_api_rows(rows: &[Value], now: i64) -> Vec<SnapshotInfo> {
+    rows.iter().filter_map(|row| {
+        let name = str_field(row, "name")?;
+        if name == "current" {
+            return None;
+        }
+        let created_ts = int_field(row, "snaptime").or_else(|| int_field(row, "ctime"));
+        Some(SnapshotInfo {
+            name,
+            description: str_field(row, "description").unwrap_or_default(),
+            created_ts,
+            age_days: created_ts.map(|ts| now.saturating_sub(ts) / 86400),
+        })
+    }).collect()
+}
+
+fn parse_lvmthin_json(out: &str, cfg: &PlatformConfig) -> Vec<ThinPoolHealth> {
+    let value: Value = serde_json::from_str(out).unwrap_or(Value::Null);
+    let rows = value.pointer("/report/0/lv").and_then(Value::as_array).cloned().unwrap_or_default();
+    rows.into_iter().filter_map(|row| {
+        let attr = str_field(&row, "lv_attr").unwrap_or_default();
+        if !attr.starts_with('t') {
+            return None;
+        }
+        let vg = str_field(&row, "vg_name").unwrap_or_default();
+        let lv = str_field(&row, "lv_name").unwrap_or_default();
+        let data_pct = str_field(&row, "data_percent").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let meta_pct = str_field(&row, "metadata_percent").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let status = classify_lvmthin_status(data_pct, meta_pct, cfg);
+        Some(ThinPoolHealth { vg, lv, data_pct, meta_pct, status })
+    }).collect()
+}
+
+fn update_platform_metrics(
+    zfs: &[ZfsPool],
+    backups: &[BackupHealth],
+    tasks: &[TaskHealth],
+    cluster: &ClusterHealth,
+    ceph: &CephHealth,
+    thin_pools: &[ThinPoolHealth],
+    snapshots: &[SnapshotHealth],
+    security: &[SecurityCheck],
+    certificates: &[CertCheck],
+    guest_agents: &[GuestAgentHealth],
+) {
+    for pool in zfs {
+        let status = if pool.state == "ONLINE" { "ok" } else { "critical" };
+        crate::exporter::prometheus::update_platform_health("zfs", &pool.name, status);
+        crate::exporter::prometheus::update_platform_value("zfs", &pool.name, "capacity_pct", pool.capacity_pct);
+        if let Some(frag) = pool.fragmentation_pct {
+            crate::exporter::prometheus::update_platform_value("zfs", &pool.name, "fragmentation_pct", frag);
+        }
+    }
+    for backup in backups {
+        crate::exporter::prometheus::update_platform_health("backup", &backup.vmid.to_string(), &backup.status);
+        if let Some(age) = backup.age_hours {
+            crate::exporter::prometheus::update_platform_value("backup", &backup.vmid.to_string(), "age_hours", age as f64);
+        }
+    }
+    let failed_tasks = tasks.iter().filter(|t| t.status.to_lowercase().contains("error") || t.status.to_lowercase().contains("fail")).count();
+    let running_tasks = tasks.iter().filter(|t| t.end_time.is_none()).count();
+    crate::exporter::prometheus::update_platform_value("tasks", "cluster", "failed_recent", failed_tasks as f64);
+    crate::exporter::prometheus::update_platform_value("tasks", "cluster", "running", running_tasks as f64);
+    crate::exporter::prometheus::update_platform_health("cluster", "quorum", &cluster.quorum);
+    crate::exporter::prometheus::update_platform_health("ceph", "cluster", &ceph.health);
+    for pool in thin_pools {
+        let name = format!("{}/{}", pool.vg, pool.lv);
+        crate::exporter::prometheus::update_platform_health("lvmthin", &name, &pool.status);
+        crate::exporter::prometheus::update_platform_value("lvmthin", &name, "data_pct", pool.data_pct);
+        crate::exporter::prometheus::update_platform_value("lvmthin", &name, "metadata_pct", pool.meta_pct);
+    }
+    for snapshot in snapshots {
+        let status = if snapshot.oldest_days.unwrap_or(0) > 0 { "info" } else { "ok" };
+        crate::exporter::prometheus::update_platform_health("snapshot", &snapshot.vmid.to_string(), status);
+        crate::exporter::prometheus::update_platform_value("snapshot", &snapshot.vmid.to_string(), "count", snapshot.count as f64);
+        if let Some(days) = snapshot.oldest_days {
+            crate::exporter::prometheus::update_platform_value("snapshot", &snapshot.vmid.to_string(), "oldest_days", days as f64);
+        }
+    }
+    for check in security {
+        crate::exporter::prometheus::update_platform_health("security", &check.key, &check.severity);
+    }
+    for cert in certificates {
+        crate::exporter::prometheus::update_platform_health("certificate", &cert.name, &cert.status);
+        if let Some(days) = cert.days_remaining {
+            crate::exporter::prometheus::update_platform_value("certificate", &cert.name, "days_remaining", days as f64);
+        }
+    }
+    for agent in guest_agents {
+        crate::exporter::prometheus::update_platform_health("guest_agent", &agent.vmid.to_string(), &agent.status);
+    }
 }
 
 fn str_field(value: &Value, key: &str) -> Option<String> {
@@ -706,6 +1103,105 @@ fn int_field(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
 }
 
-fn shell_arg(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_zfs_pool_status_and_errors() {
+        let list = "rpool\tONLINE\t62%\t12%\ntank\tDEGRADED\t81%\t34%\n";
+        let status = r#"
+  pool: rpool
+ state: ONLINE
+  scan: scrub repaired 0B in 00:10:03 with 0 errors on Sun Apr 19 00:10:03 2026
+config:
+
+        NAME        STATE     READ WRITE CKSUM
+        rpool       ONLINE       0     0     0
+          sda3      ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: tank
+ state: DEGRADED
+  scan: scrub repaired 128K in 00:03:00 with 2 errors on Sun Apr 19 00:03:00 2026
+config:
+
+        NAME        STATE     READ WRITE CKSUM
+        tank        DEGRADED     0     0     2
+          sdb       ONLINE       0     0     0
+          sdc       DEGRADED     0     0     2
+
+errors: Permanent errors have been detected
+"#;
+        let pools = parse_zfs_pools(list, status);
+        assert_eq!(pools.len(), 2);
+        assert_eq!(pools[0].name, "rpool");
+        assert_eq!(pools[0].state, "ONLINE");
+        assert_eq!(pools[0].checksum_errors, 0);
+        assert_eq!(pools[1].name, "tank");
+        assert_eq!(pools[1].state, "DEGRADED");
+        assert_eq!(pools[1].capacity_pct, 81.0);
+        assert_eq!(pools[1].checksum_errors, 2);
+        assert!(scrub_has_errors(&pools[1].scrub));
+    }
+
+    #[test]
+    fn parses_lvmthin_thresholds_from_json() {
+        let cfg = PlatformConfig::default();
+        let json = r#"{
+          "report": [{
+            "lv": [
+              {"vg_name":"pve","lv_name":"data","lv_attr":"twi-aotz--","data_percent":"86.2","metadata_percent":"12.5"},
+              {"vg_name":"pve","lv_name":"root","lv_attr":"-wi-ao----","data_percent":"","metadata_percent":""}
+            ]
+          }]
+        }"#;
+        let pools = parse_lvmthin_json(json, &cfg);
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].vg, "pve");
+        assert_eq!(pools[0].lv, "data");
+        assert_eq!(pools[0].status, "warning");
+    }
+
+    #[test]
+    fn parses_task_history_rows() {
+        let now = 1_700_000_600;
+        let json = r#"[
+          {"upid":"UPID:node:1","node":"node1","type":"vzdump","id":"101","user":"root@pam","status":"OK","starttime":1700000000,"endtime":1700000300},
+          {"upid":"UPID:node:2","node":"node1","type":"qmigrate","id":"102","user":"root@pam","starttime":1700000000}
+        ]"#;
+        let tasks = parse_tasks_json(json, now);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].vmid, Some(101));
+        assert_eq!(tasks[0].duration_secs, 300);
+        assert_eq!(tasks[1].status, "running");
+        assert_eq!(tasks[1].duration_secs, 600);
+    }
+
+    #[test]
+    fn parses_snapshot_api_metadata() {
+        let now = 1_700_086_400;
+        let rows: Vec<Value> = serde_json::from_str(r#"[
+          {"name":"current"},
+          {"name":"pre-upgrade","description":"before updates","snaptime":1700000000}
+        ]"#).unwrap();
+        let snapshots = parse_snapshot_api_rows(&rows, now);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].name, "pre-upgrade");
+        assert_eq!(snapshots[0].age_days, Some(1));
+    }
+
+    #[test]
+    fn parses_backup_artifact_from_storage_content() {
+        let row: Value = serde_json::from_str(r#"{
+          "volid": "backup:backup/vzdump-qemu-104-2026_04_24-12_30_00.vma.zst",
+          "size": 123456,
+          "ctime": 1777033800
+        }"#).unwrap();
+        let artifact = parse_backup_artifact(&row, "pve1", "backup").unwrap();
+        assert_eq!(artifact.vmid, 104);
+        assert_eq!(artifact.size_bytes, Some(123456));
+        assert_eq!(artifact.ctime, 1777033800);
+    }
 }
