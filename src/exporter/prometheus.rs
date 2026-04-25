@@ -495,6 +495,7 @@ pub struct MetricsServer {
     pub hub_state: Option<crate::cluster::HubState>,
     pub auth: Option<String>,
     pub storage: Option<std::sync::Arc<crate::storage::Storage>>,
+    pub prometheus_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -505,22 +506,31 @@ struct AppState {
 }
 
 impl MetricsServer {
-    pub fn new(addr: &str, port: u16, tx: broadcast::Sender<String>, storage: Option<std::sync::Arc<crate::storage::Storage>>, hub_state: Option<crate::cluster::HubState>, auth: Option<String>) -> Self {
+    pub fn new(addr: &str, port: u16, tx: broadcast::Sender<String>, storage: Option<std::sync::Arc<crate::storage::Storage>>, hub_state: Option<crate::cluster::HubState>, auth: Option<String>, prometheus_enabled: bool) -> Self {
         Self {
             addr: format!("{}:{}", addr, port),
             tx,
             hub_state,
             auth,
             storage,
+            prometheus_enabled,
         }
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let expected_auth = self.auth.map(|a| format!("Basic {}", BASE64_STANDARD.encode(a)));
+        let expected_auth = self
+            .auth
+            .and_then(|a| {
+                let trimmed = a.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(format!("Basic {}", BASE64_STANDARD.encode(trimmed)))
+                }
+            });
         let state = AppState { tx: self.tx, expected_auth, storage: self.storage };
 
         let mut app = Router::new()
-            .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/api/status", get(status_handler))
             .route("/api/v1/alerts/test", post(test_alert_handler))
@@ -531,6 +541,10 @@ impl MetricsServer {
             .fallback(static_handler)
             .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
             .with_state(state);
+
+        if self.prometheus_enabled {
+            app = app.route("/metrics", get(metrics_handler));
+        }
 
         if let Some(hub_state) = self.hub_state {
             app = app.merge(crate::cluster::hub_router(hub_state));
@@ -551,6 +565,10 @@ async fn auth_middleware(
     next: Next,
 ) -> Result<Response, Response> {
     if let Some(ref expected) = state.expected_auth {
+        if req.uri().path() == "/ws" {
+            return Ok(next.run(req).await);
+        }
+
         let auth_header = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).unwrap_or("");
         
         // Use timing-safe compare to prevent timing attacks

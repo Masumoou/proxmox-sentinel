@@ -17,7 +17,9 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, broadcast};
 use tokio::time::{interval, Duration};
@@ -61,6 +63,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Interactive first-run setup. Writes config.toml and systemd service.
+    Init {
+        /// Overwrite existing config/service files
+        #[arg(long)]
+        force: bool,
+    },
+    /// Check API, host permissions, port binding, config, and systemd install.
+    Doctor,
     /// Print example configuration to stdout
     PrintConfig,
     /// Test Proxmox API connectivity and print node list
@@ -85,6 +95,14 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
+        Some(Commands::Init { force }) => {
+            run_init(&cli.config, force)?;
+            return Ok(());
+        }
+        Some(Commands::Doctor) => {
+            run_doctor(&cli.config).await?;
+            return Ok(());
+        }
         Some(Commands::PrintConfig) => {
             Config::write_example();
             return Ok(());
@@ -113,6 +131,217 @@ async fn main() -> Result<()> {
     info!("proxmox-sentinel starting");
 
     run(cfg).await
+}
+
+fn run_init(config_path: &Path, force: bool) -> Result<()> {
+    let api_url = prompt("Proxmox API URL", "https://127.0.0.1:8006")?;
+    let token_id = prompt("API token ID", "sentinel@pve!monitoring")?;
+    let token_secret = prompt_secret("API token secret")?;
+    let listen_port = prompt("Listen port", "9101")?.parse::<u16>().context("listen port must be a number")?;
+    let verify_tls = prompt_bool("Verify TLS certificates?", false)?;
+    let dashboard_auth = prompt_bool("Enable dashboard auth?", false)?;
+    let prometheus = prompt_bool("Enable Prometheus endpoint?", true)?;
+
+    if config_path.exists() && !force {
+        anyhow::bail!("{} already exists. Re-run with --force to overwrite.", config_path.display());
+    }
+
+    let auth_line = if dashboard_auth {
+        let user = prompt("Dashboard username", "admin")?;
+        let pass = prompt_secret("Dashboard password")?;
+        format!("auth = \"{}:{}\"", user, pass)
+    } else {
+        "auth = \"\"".to_string()
+    };
+
+    let cfg = format!(
+        r#"[proxmox]
+api_url = "{api_url}"
+api_token_id = "{token_id}"
+api_token_secret = "{token_secret}"
+nodes = []
+insecure_tls = {insecure_tls}
+
+[metrics]
+listen_addr = "0.0.0.0"
+listen_port = {listen_port}
+{auth_line}
+prometheus_enabled = {prometheus}
+
+[logs]
+tail_lines = 100
+buffer_size = 10000
+watch_paths = []
+
+[alerts]
+enabled = true
+webhook_url = ""
+cpu_threshold = 90.0
+memory_threshold = 85.0
+disk_threshold = 90.0
+
+[ssh]
+private_key_path = "/root/.ssh/id_ed25519"
+user = "root"
+timeout_secs = 10
+skip_vmids = []
+
+[collection]
+api_interval_secs = 15
+cgroup_interval_secs = 5
+vm_interval_secs = 30
+service_check_interval_secs = 60
+
+[services]
+auto_discover = true
+alert_on_discovered = true
+
+[haproxy]
+enabled = false
+stats_url = "http://127.0.0.1:8404/stats;csv"
+interval_secs = 10
+
+[storage]
+db_path = "/var/lib/proxmox-sentinel/sentinel.db"
+metric_retention_days = 7
+log_retention_days = 14
+alert_retention_days = 30
+
+[cluster]
+mode = "standalone"
+server_url = "http://127.0.0.1:{listen_port}"
+shared_secret = "change_me"
+"#,
+        insecure_tls = !verify_tls,
+    );
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(config_path, cfg).with_context(|| format!("writing {}", config_path.display()))?;
+
+    let service_path = Path::new("/etc/systemd/system/proxmox-sentinel.service");
+    if service_path.exists() && !force {
+        println!("systemd service already exists: {}", service_path.display());
+    } else {
+        let service = format!(
+            r#"[Unit]
+Description=Proxmox Sentinel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/proxmox-sentinel --config {}
+Restart=always
+RestartSec=5
+User=root
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target
+"#,
+            config_path.display()
+        );
+        std::fs::write(service_path, service).with_context(|| format!("writing {}", service_path.display()))?;
+    }
+
+    println!("Wrote {}", config_path.display());
+    println!("Wrote {}", service_path.display());
+    println!("Next: systemctl daemon-reload && systemctl enable --now proxmox-sentinel");
+    Ok(())
+}
+
+async fn run_doctor(config_path: &Path) -> Result<()> {
+    let mut failures = 0usize;
+    let mut check = |name: &str, result: Result<String>| {
+        match result {
+            Ok(detail) => println!("OK   {name}: {detail}"),
+            Err(e) => {
+                failures += 1;
+                println!("FAIL {name}: {e}");
+            }
+        }
+    };
+
+    check("config file", Config::load(config_path).and_then(|cfg| {
+        cfg.validate()?;
+        Ok(format!("valid ({})", config_path.display()))
+    }));
+
+    let cfg = Config::load(config_path)?;
+    let client = ProxmoxClient::new(&cfg.proxmox)?;
+
+    check("Proxmox API", async {
+        client.list_nodes().await.map(|nodes| format!("connected, {} nodes", nodes.len()))
+    }.await);
+
+    let nodes = client.list_nodes().await.unwrap_or_default();
+    check("list nodes", if nodes.is_empty() { anyhow::bail!("no nodes returned") } else { Ok(nodes.join(", ")) });
+
+    let mut guest_count = 0usize;
+    for node in &nodes {
+        guest_count += client.list_guests(node).await.unwrap_or_default().len();
+    }
+    check("list guests", if guest_count == 0 { anyhow::bail!("no guests returned") } else { Ok(format!("{guest_count} guests")) });
+
+    check("cgroup access", std::fs::read_dir("/sys/fs/cgroup")
+        .map(|_| "/sys/fs/cgroup readable".to_string())
+        .map_err(Into::into));
+
+    check("LXC rootfs logs", std::fs::read_dir("/var/lib/lxc")
+        .map(|_| "/var/lib/lxc readable".to_string())
+        .map_err(Into::into));
+
+    check("bind port", TcpListener::bind((cfg.metrics.listen_addr.as_str(), cfg.metrics.listen_port))
+        .map(|_| format!("{}:{}", cfg.metrics.listen_addr, cfg.metrics.listen_port))
+        .map_err(Into::into));
+
+    check("systemd service", if Path::new("/etc/systemd/system/proxmox-sentinel.service").exists() {
+        Ok("installed".to_string())
+    } else {
+        anyhow::bail!("missing /etc/systemd/system/proxmox-sentinel.service")
+    });
+
+    if failures > 0 {
+        anyhow::bail!("{failures} doctor checks failed");
+    }
+    Ok(())
+}
+
+fn prompt(label: &str, default: &str) -> Result<String> {
+    print!("{label} [{default}]: ");
+    io::stdout().flush()?;
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    let value = value.trim();
+    Ok(if value.is_empty() { default.to_string() } else { value.to_string() })
+}
+
+fn prompt_secret(label: &str) -> Result<String> {
+    print!("{label}: ");
+    io::stdout().flush()?;
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::bail!("{label} is required");
+    }
+    Ok(value.to_string())
+}
+
+fn prompt_bool(label: &str, default: bool) -> Result<bool> {
+    let default_label = if default { "Y/n" } else { "y/N" };
+    print!("{label} [{default_label}]: ");
+    io::stdout().flush()?;
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    match value.trim().to_lowercase().as_str() {
+        "" => Ok(default),
+        "y" | "yes" | "true" | "1" => Ok(true),
+        "n" | "no" | "false" | "0" => Ok(false),
+        _ => anyhow::bail!("answer yes or no"),
+    }
 }
 
 fn normalize_service_name(name: &str) -> String {
@@ -224,6 +453,7 @@ async fn run(cfg: Config) -> Result<()> {
         Some(storage.clone()),
         hub_state,
         cfg.metrics.auth.clone(),
+        cfg.metrics.prometheus_enabled,
     );
     tokio::spawn(async move {
         if let Err(e) = metrics_server.run().await {
@@ -325,7 +555,9 @@ async fn run(cfg: Config) -> Result<()> {
                                     "cpu": guest.cpu_usage,
                                     "maxcpu": guest.cpu_count,
                                     "mem": guest.mem_used,
-                                    "maxmem": guest.mem_total
+                                    "maxmem": guest.mem_total,
+                                    "os_name": guest.os_name.clone(),
+                                    "os_version": guest.os_version.clone()
                                 }));
 
                                 for a in dispatcher.check_guest(guest) {

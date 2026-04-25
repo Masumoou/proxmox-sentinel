@@ -11,6 +11,7 @@ insecure_tls      = true        # Proxmox uses self-signed cert by default
 [metrics]
 listen_addr = "0.0.0.0"
 listen_port = 9101              # Prometheus will scrape :9101/metrics
+prometheus_enabled = true
 auth        = "admin:secret"    # Basic Auth for dashboard + metrics (optional)
 
 [logs]

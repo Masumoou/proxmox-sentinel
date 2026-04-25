@@ -164,11 +164,10 @@ impl<'a> VmCollector<'a> {
         // Get filesystem info
         let fs_json = self
             .client
-            .vm_agent_exec(
+            .vm_agent_exec_shell(
                 node,
                 vmid,
-                &["df", "--output=source,fstype,size,used,avail,pcent,target",
-                  "-k", "--block-size=1", "--no-sync"],
+                "df --output=source,fstype,size,used,avail,pcent,target -k --block-size=1 --no-sync",
             )
             .await?;
 
@@ -177,10 +176,10 @@ impl<'a> VmCollector<'a> {
         // Get process list via agent exec
         let ps_json = self
             .client
-            .vm_agent_exec(
+            .vm_agent_exec_shell(
                 node,
                 vmid,
-                &["ps", "-eo", "pid,comm,pcpu,rss", "--no-headers", "--sort=-pcpu"],
+                "ps -eo pid,comm,pcpu,rss --no-headers --sort=-pcpu",
             )
             .await?;
 
@@ -190,14 +189,10 @@ impl<'a> VmCollector<'a> {
         // no Sentinel sidecar inside the VM and no SSH key requirement.
         let svc_json = self
             .client
-            .vm_agent_exec(
+            .vm_agent_exec_shell(
                 node,
                 vmid,
-                &[
-                    "sh",
-                    "-lc",
-                    "systemctl list-units --type=service --no-pager --no-legend --output=json 2>/dev/null || systemctl list-units --type=service --no-pager --no-legend --plain 2>/dev/null || rc-status --nocolor 2>/dev/null || true",
-                ],
+                "systemctl list-units --type=service --all --no-pager --no-legend --output=json 2>/dev/null || systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null || rc-status --nocolor 2>/dev/null || true",
             )
             .await
             .unwrap_or_default();
@@ -205,7 +200,7 @@ impl<'a> VmCollector<'a> {
 
         let os_release = self
             .client
-            .vm_agent_exec(node, vmid, &["cat", "/etc/os-release"])
+            .vm_agent_exec_shell(node, vmid, "cat /etc/os-release 2>/dev/null || true")
             .await
             .unwrap_or_default();
         let (os_name, os_version) = parse_os_release(&os_release);

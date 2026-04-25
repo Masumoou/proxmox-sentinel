@@ -38,11 +38,20 @@
       <a href="/backups" class="nav-item" class:nav-active={currentPath === '/backups'}>
         <span class="nav-icon">⊘</span> BACKUPS
       </a>
+      <a href="/tasks" class="nav-item" class:nav-active={currentPath === '/tasks'}>
+        <span class="nav-icon">▣</span> TASKS
+      </a>
       <a href="/settings" class="nav-item" class:nav-active={currentPath === '/settings'}>
         <span class="nav-icon">⊛</span> SETTINGS
       </a>
       <a href="/logs" class="nav-item" class:nav-active={currentPath === '/logs'}>
         <span class="nav-icon">▤</span> LOGS
+      </a>
+      <a href="/alerts" class="nav-item" class:nav-active={currentPath === '/alerts'}>
+        <span class="nav-icon">◇</span> ALERTS
+      </a>
+      <a href="/security" class="nav-item" class:nav-active={currentPath === '/security'}>
+        <span class="nav-icon">◍</span> SECURITY
       </a>
       <a href="/haproxy" class="nav-item" class:nav-active={currentPath === '/haproxy'}>
         <span class="nav-icon">◓</span> HAPROXY

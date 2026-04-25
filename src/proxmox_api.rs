@@ -62,6 +62,8 @@ pub struct GuestStatus {
     pub node: String,
     pub ip_address: Option<String>,
     pub tags: Vec<String>,
+    pub os_name: Option<String>,
+    pub os_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -367,9 +369,17 @@ impl ProxmoxClient {
 
     /// Run a command inside a VM via QEMU guest agent
     pub async fn vm_agent_exec(&self, node: &str, vmid: u32, cmd: &[&str]) -> Result<String> {
+        self.vm_agent_exec_command(node, vmid, cmd.join(" ")).await
+    }
+
+    pub async fn vm_agent_exec_shell(&self, node: &str, vmid: u32, command: &str) -> Result<String> {
+        self.vm_agent_exec_command(node, vmid, format!("/bin/sh -lc {}", shell_quote(command))).await
+    }
+
+    async fn vm_agent_exec_command(&self, node: &str, vmid: u32, command: String) -> Result<String> {
         #[derive(Serialize)]
-        struct ExecReq<'a> {
-            command: &'a [&'a str],
+        struct ExecReq {
+            command: String,
         }
         #[derive(Deserialize)]
         struct ExecResp {
@@ -393,7 +403,7 @@ impl ProxmoxClient {
             .http
             .post(&url)
             .header("Authorization", &self.auth_header)
-            .json(&ExecReq { command: cmd })
+            .json(&ExecReq { command })
             .send()
             .await?
             .json()
@@ -454,9 +464,12 @@ fn raw_to_guest(raw: RawGuest, kind: GuestKind, node: &str) -> GuestStatus {
         .map(str::to_string)
         .collect();
 
+    let name = raw.name.unwrap_or_else(|| format!("{}", raw.vmid));
+    let (os_name, os_version) = infer_guest_os(&name, &tags);
+
     GuestStatus {
         vmid: raw.vmid,
-        name: raw.name.unwrap_or_else(|| format!("{}", raw.vmid)),
+        name,
         kind,
         status: raw.status,
         cpu_usage: raw.cpu.unwrap_or(0.0),
@@ -471,5 +484,57 @@ fn raw_to_guest(raw: RawGuest, kind: GuestKind, node: &str) -> GuestStatus {
         node: node.to_string(),
         ip_address: None, // enriched later
         tags,
+        os_name,
+        os_version,
     }
+}
+
+fn infer_guest_os(name: &str, tags: &[String]) -> (Option<String>, Option<String>) {
+    let haystack = format!("{} {}", name, tags.join(" ")).to_lowercase();
+    let version = |prefix: &str| extract_version_after(&haystack, prefix);
+
+    if haystack.contains("fedora") {
+        return (Some("Fedora Linux".to_string()), version("fedora"));
+    }
+    if haystack.contains("ubuntu") {
+        return (Some("Ubuntu".to_string()), version("ubuntu"));
+    }
+    if haystack.contains("debian") {
+        return (Some("Debian GNU/Linux".to_string()), version("debian"));
+    }
+    if haystack.contains("rocky") {
+        return (Some("Rocky Linux".to_string()), version("rocky"));
+    }
+    if haystack.contains("alma") {
+        return (Some("AlmaLinux".to_string()), version("alma"));
+    }
+    if haystack.contains("centos") {
+        return (Some("CentOS".to_string()), version("centos"));
+    }
+    if haystack.contains("windows") || haystack.contains("win-") || haystack.starts_with("win") {
+        return (Some("Windows".to_string()), version("windows").or_else(|| version("win")));
+    }
+    if haystack.contains("arch") {
+        return (Some("Arch Linux".to_string()), None);
+    }
+
+    (None, None)
+}
+
+fn extract_version_after(text: &str, marker: &str) -> Option<String> {
+    let start = text.find(marker)? + marker.len();
+    let rest = text[start..].trim_start_matches(|c: char| c == '-' || c == '_' || c.is_whitespace());
+    let version: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }

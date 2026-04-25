@@ -39,6 +39,8 @@ export interface GuestData {
   maxcpu: number;
   mem: number;
   maxmem: number;
+  os_name?: string | null;
+  os_version?: string | null;
 }
 
 export interface GuestDetail {
@@ -101,8 +103,8 @@ export const enrichedGuests = derived([guests, detailMap], ([$guests, $detailMap
       agent: detail.agent,
       ssh: detail.ssh,
       ip: detail.ip,
-      os_name: detail.os_name,
-      os_version: detail.os_version,
+      os_name: detail.os_name ?? guest.os_name,
+      os_version: detail.os_version ?? guest.os_version,
       mem_current: detail.mem_current,
       mem_limit: detail.mem_limit,
       pids: detail.pids,
@@ -248,6 +250,8 @@ function normalizeGuest(guest: any): GuestData {
     maxcpu: guest.maxcpu || 0,
     mem: guest.mem || 0,
     maxmem: guest.maxmem || 0,
+    os_name: guest.os_name || null,
+    os_version: guest.os_version || null,
   };
 }
 

@@ -9,6 +9,10 @@
   let clusterMemTotal = $derived($nodes.reduce((sum, n) => sum + n.mem_total, 0));
   let clusterStorageUsed = $derived($storagePools.reduce((sum, s) => sum + (s.used || 0), 0));
   let clusterStorageTotal = $derived($storagePools.reduce((sum, s) => sum + (s.total || 0), 0));
+  let showWebhook = $state(false);
+  let webhookTestUrl = $state('');
+  let webhookStatus = $state<'idle' | 'sending' | 'ok' | 'error'>('idle');
+  let webhookMessage = $state('');
 
   function gaugeStyle(percent: number, color: string) {
     const clamped = Math.min(100, Math.max(0, percent || 0));
@@ -33,17 +37,44 @@
     if (guest.os_name) return guest.os_name;
     return 'OS unknown';
   }
+
+  async function sendWebhookTest() {
+    if (!webhookTestUrl.trim()) {
+      webhookStatus = 'error';
+      webhookMessage = 'Enter a webhook URL first.';
+      return;
+    }
+
+    webhookStatus = 'sending';
+    webhookMessage = 'Sending test alert...';
+
+    try {
+      const res = await fetch('/api/v1/alerts/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook_url: webhookTestUrl.trim() }),
+      });
+      webhookStatus = res.ok ? 'ok' : 'error';
+      webhookMessage = res.ok ? 'Test alert sent.' : 'Webhook test failed.';
+    } catch {
+      webhookStatus = 'error';
+      webhookMessage = 'Could not reach Sentinel API.';
+    }
+  }
 </script>
 
 <div class="dashboard-page">
   <header class="dash-header">
     <div>
-      <div class="eyebrow">PROXMOX SENTINEL v0.2.4</div>
+      <div class="eyebrow">PROXMOX SENTINEL v0.2.5</div>
       <h1>Cluster Overview</h1>
     </div>
-    <div class="live-pill" class:online={$wsConnected}>
-      <span></span>
-      {$wsConnected ? 'LIVE TELEMETRY' : `RECONNECTING ${$reconnectAttempts ? `(${ $reconnectAttempts })` : ''}`}
+    <div class="header-actions">
+      <div class="live-pill" class:online={$wsConnected}>
+        <span></span>
+        {$wsConnected ? 'LIVE TELEMETRY' : `RECONNECTING ${$reconnectAttempts ? `(${ $reconnectAttempts })` : ''}`}
+      </div>
+      <button class="webhook-button" onclick={() => showWebhook = true}>Webhook Integration</button>
     </div>
   </header>
 
@@ -137,15 +168,44 @@
   </section>
 </div>
 
+{#if showWebhook}
+  <div class="modal-backdrop" role="button" tabindex="0" onclick={() => showWebhook = false} onkeydown={(event) => event.key === 'Escape' && (showWebhook = false)}>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="webhook-title" tabindex="-1" onclick={(event) => event.stopPropagation()} onkeydown={(event) => event.stopPropagation()}>
+      <div class="modal-head">
+        <div>
+          <span>Alerts</span>
+          <h2 id="webhook-title">Webhook Integration</h2>
+        </div>
+        <button class="close-button" aria-label="Close webhook integration" onclick={() => showWebhook = false}>×</button>
+      </div>
+
+      <label for="webhook-url">Webhook URL</label>
+      <div class="webhook-row">
+        <input id="webhook-url" bind:value={webhookTestUrl} placeholder="https://discord.com/api/webhooks/..." />
+        <button onclick={sendWebhookTest} disabled={webhookStatus === 'sending'}>{webhookStatus === 'sending' ? 'Sending' : 'Send Test'}</button>
+      </div>
+
+      {#if webhookMessage}
+        <p class:ok={webhookStatus === 'ok'} class:bad={webhookStatus === 'error'}>{webhookMessage}</p>
+      {/if}
+      <small>For persistent alerts, set `[alerts].webhook_url` in `config.toml`.</small>
+    </div>
+  </div>
+{/if}
+
 <style>
   .dashboard-page { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
   .dash-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
   .eyebrow { color: var(--accent-cyan); letter-spacing: 3px; font-size: 0.72rem; font-weight: 800; }
   h1 { font-size: 1.6rem; letter-spacing: 1px; margin-top: 4px; }
   .live-pill { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-red); font-size: 0.68rem; font-weight: 800; letter-spacing: 1.5px; }
   .live-pill span { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-red); box-shadow: 0 0 10px var(--accent-red); }
   .live-pill.online { color: var(--accent-green); }
   .live-pill.online span { background: var(--accent-green); box-shadow: 0 0 10px var(--accent-green); }
+  .webhook-button, .webhook-row button, .close-button { border: 1px solid var(--border-color); background: rgba(255,255,255,0.04); color: var(--text-primary); border-radius: 6px; cursor: pointer; font-weight: 800; }
+  .webhook-button { padding: 8px 11px; font-size: 0.66rem; letter-spacing: 1px; text-transform: uppercase; }
+  .webhook-button:hover, .webhook-row button:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
   .summary-grid { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 10px; }
   .summary-card, .panel, .guest-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; }
   .summary-card { min-height: 92px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; }
@@ -176,8 +236,25 @@
   .note.ok { border-left-color: var(--accent-green); color: var(--text-primary); }
   .note.warn { border-left-color: var(--accent-red); }
   .empty { min-height: 260px; display: grid; place-items: center; color: var(--text-secondary); letter-spacing: 2px; }
+  .modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0,0,0,0.72); padding: 20px; }
+  .modal-panel { width: min(560px, 100%); background: var(--card-bg); border: 1px solid var(--accent-cyan); border-radius: 8px; padding: 18px; box-shadow: 0 0 28px rgba(0,212,255,0.16); }
+  .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+  .modal-head span, label, .modal-panel small { color: var(--text-secondary); font-size: 0.68rem; letter-spacing: 1.6px; text-transform: uppercase; }
+  .modal-head h2 { margin-top: 4px; font-size: 1.25rem; }
+  .close-button { width: 32px; height: 32px; font-size: 1.1rem; }
+  .webhook-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin: 8px 0 12px; }
+  input { min-width: 0; border: 1px solid var(--border-color); background: var(--panel-bg); color: var(--text-primary); border-radius: 6px; padding: 10px; }
+  .webhook-row button { padding: 0 14px; }
+  .webhook-row button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .modal-panel p { margin-bottom: 10px; font-size: 0.78rem; }
   @media (max-width: 1200px) {
     .summary-grid { grid-template-columns: repeat(3, 1fr); }
     .workspace-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .dash-header { align-items: flex-start; flex-direction: column; }
+    .header-actions { justify-content: flex-start; }
+    .webhook-row { grid-template-columns: 1fr; }
+    .webhook-row button { min-height: 38px; }
   }
 </style>

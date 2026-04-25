@@ -100,6 +100,8 @@ pub struct MetricsConfig {
     pub listen_addr: String,
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
+    #[serde(default = "default_prometheus_enabled")]
+    pub prometheus_enabled: bool,
     pub auth: Option<String>,
 }
 
@@ -109,6 +111,10 @@ fn default_listen_addr() -> String {
 
 fn default_listen_port() -> u16 {
     9101
+}
+
+fn default_prometheus_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
