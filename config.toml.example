@@ -127,6 +127,32 @@ mode          = "standalone"   # "standalone", "agent", or "server"
 server_url    = "http://127.0.0.1:9101" # Only used if mode="agent"
 shared_secret = "change_me"    # Pre-shared key for authenticating agents
 
+# ── Platform Health Collectors ───────────────────────────────────────────────
+# Enables ZFS, backup age, task history, HA/quorum, snapshots, Ceph, LVM-thin,
+# certificate expiry, and read-only security posture checks.
+[platform]
+enabled                   = true
+interval_secs             = 60
+backup_warn_hours         = 48
+backup_critical_hours     = 72
+task_long_running_minutes = 60
+snapshot_warn_days        = 7
+snapshot_max_count        = 5
+zfs_usage_threshold       = 80.0
+security_enabled          = true
+
+[certificates]
+warn_days     = 30
+critical_days = 7
+
+# [[certificates.targets]]
+# name = "proxmox-ui"
+# url  = "https://pve.example.com:8006"
+
+# [[certificates.targets]]
+# name = "app"
+# url  = "https://app.example.com"
+
 # ── Application Metrics (v0.2.0) ─────────────────────────────────────────────
 # Track internal application counters (PHP/Nextcloud/JSON APIs)
 # [[app_metrics]]

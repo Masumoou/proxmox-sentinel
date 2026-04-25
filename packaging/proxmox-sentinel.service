@@ -1,0 +1,16 @@
+[Unit]
+Description=Proxmox Sentinel
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/Masumoou/proxmox-sentinel
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/proxmox-sentinel --config /etc/proxmox-sentinel/config.toml
+Restart=always
+RestartSec=5
+User=root
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

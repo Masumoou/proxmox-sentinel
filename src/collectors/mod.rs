@@ -4,6 +4,7 @@ pub mod vm;
 pub mod haproxy;
 pub mod postgres;
 pub mod redis;
+pub mod platform;
 pub mod object_storage;
 pub mod file_activity;
 pub mod app_metrics;

@@ -85,6 +85,17 @@ export const securityEvents = writable<any[]>([]);
 export const appMetrics = writable<Record<string, any>>({});
 export const appLogEvents = writable<any[]>([]);
 export const appLogStats = writable<Record<string, any>>({});
+export const platformHealth = writable<any>({
+  zfs: [],
+  backups: [],
+  tasks: [],
+  cluster: null,
+  ceph: null,
+  thin_pools: [],
+  snapshots: [],
+  security: [],
+  certificates: [],
+});
 export const wsConnected = writable(false);
 export const reconnectAttempts = writable(0);
 export const lastUpdate = writable('');
@@ -235,6 +246,11 @@ function handleMessage(payload: any) {
 
   if (payload.type === 'app_log_stats') {
     appLogStats.update((stats) => ({ ...stats, [payload.app]: payload }));
+    return;
+  }
+
+  if (payload.type === 'platform_health') {
+    platformHealth.set(payload);
   }
 }
 

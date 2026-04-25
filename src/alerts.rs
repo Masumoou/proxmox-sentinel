@@ -54,6 +54,7 @@ pub enum Alert {
     AppStorageFull { name: String, usage_pct: f64 },
     #[allow(dead_code)]
     AppVersionMismatch { name: String, expected: String, found: String },
+    PlatformIssue { key: String, severity: String, summary: String },
     Test { message: String },
 }
 
@@ -83,6 +84,7 @@ impl Alert {
             Alert::AppAuthFailures { name, .. } => format!("app_auth:{name}"),
             Alert::AppStorageFull { name, .. } => format!("app_storage:{name}"),
             Alert::AppVersionMismatch { name, .. } => format!("app_version:{name}"),
+            Alert::PlatformIssue { key, .. } => format!("platform:{key}"),
             Alert::Test { .. } => format!("test_alert:{}", chrono::Utc::now().timestamp()),
         }
     }
@@ -102,6 +104,11 @@ impl Alert {
             | Alert::AppStorageFull { .. }
             | Alert::OomKilled { .. } => "critical",
             Alert::VmConnectionLost { .. } => "warning",
+            Alert::PlatformIssue { severity, .. } => match severity.as_str() {
+                "critical" => "critical",
+                "info" => "info",
+                _ => "warning",
+            },
             Alert::MigrationDetected { .. } => "info",
             Alert::NodeHighCpu { cpu_pct, .. } | Alert::GuestHighCpu { cpu_pct, .. }
                 if *cpu_pct > 95.0 => "critical",
@@ -171,6 +178,7 @@ impl Alert {
                 format!("Application {name} storage nearly full: {usage_pct:.1}%"),
             Alert::AppVersionMismatch { name, expected, found } =>
                 format!("Application {name} version mismatch: expected {expected}, found {found}"),
+            Alert::PlatformIssue { summary, .. } => summary.clone(),
             Alert::Test { message } =>
                 format!("SENTINEL TEST ALERT: {message}"),
         }

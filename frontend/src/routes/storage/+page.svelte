@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { formatBytes, guestDiskMounts, pct, storagePools, wsConnected } from '$lib/store';
+  import { formatBytes, guestDiskMounts, pct, platformHealth, storagePools, wsConnected } from '$lib/store';
+
+  let zfs = $derived($platformHealth.zfs || []);
+  let thinPools = $derived($platformHealth.thin_pools || []);
+  let ceph = $derived($platformHealth.ceph);
 </script>
 
 <div class="page">
@@ -35,6 +39,54 @@
     {/if}
   </section>
 
+  <section class="health-grid">
+    <div class="panel">
+      <div class="section-head"><span>ZFS Pools</span><small>{zfs.length} pools</small></div>
+      {#if zfs.length === 0}
+        <div class="hint">No ZFS pools detected on this node.</div>
+      {:else}
+        {#each zfs as pool (pool.name)}
+          <div class="health-row" class:bad={pool.state !== 'ONLINE'}>
+            <b>{pool.name}</b>
+            <span>{pool.state}</span>
+            <span>{pool.capacity_pct}% used</span>
+            <small>{pool.scrub}</small>
+          </div>
+        {/each}
+      {/if}
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><span>LVM Thin Pools</span><small>{thinPools.length} pools</small></div>
+      {#if thinPools.length === 0}
+        <div class="hint">No LVM-thin metadata data detected yet.</div>
+      {:else}
+        {#each thinPools as pool (`${pool.vg}/${pool.lv}`)}
+          <div class="health-row" class:bad={pool.status === 'critical'} class:warn={pool.status === 'warning'}>
+            <b>{pool.vg}/{pool.lv}</b>
+            <span>data {pool.data_pct}%</span>
+            <span>meta {pool.meta_pct}%</span>
+            <small>{pool.status}</small>
+          </div>
+        {/each}
+      {/if}
+    </div>
+
+    <div class="panel">
+      <div class="section-head"><span>Ceph</span><small>{ceph?.installed ? ceph.health : 'not installed'}</small></div>
+      {#if !ceph?.installed}
+        <div class="hint">Ceph command unavailable or not configured.</div>
+      {:else}
+        <div class="health-row" class:bad={ceph.health !== 'HEALTH_OK'}>
+          <b>{ceph.health}</b>
+          <span>OSD {ceph.osd_up ?? '--'}/{ceph.osd_total ?? '--'}</span>
+          <span>MON {ceph.mons?.join(', ') || '--'}</span>
+          <small>{ceph.detail || 'no detail'}</small>
+        </div>
+      {/if}
+    </div>
+  </section>
+
   <section class="panel">
     <div class="section-head">
       <span>Guest Filesystems</span>
@@ -67,6 +119,11 @@
   .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; color: var(--text-primary); font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; font-size: 0.7rem; }
   .section-head small { color: var(--text-secondary); }
   .storage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .health-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.74rem; }
+  .health-row small { grid-column: 1 / -1; overflow-wrap: anywhere; }
+  .health-row b { color: var(--text-primary); }
+  .health-row span { color: var(--text-secondary); }
   .pool-card { min-height: 174px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
   .pool-card.inactive { border-color: rgba(255,51,85,0.35); }
   .pool-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }

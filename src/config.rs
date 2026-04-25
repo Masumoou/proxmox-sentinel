@@ -41,6 +41,10 @@ pub struct Config {
     pub app_metrics: Vec<AppMetricsConfig>,
     #[serde(default)]
     pub app_logs: Vec<AppLogsConfig>,
+    #[serde(default)]
+    pub platform: PlatformConfig,
+    #[serde(default)]
+    pub certificates: CertificateConfig,
 }
 
 impl Config {
@@ -226,6 +230,87 @@ pub struct CollectionConfig {
     pub vm_interval_secs: u64,
     #[serde(default = "default_service_interval")]
     pub service_check_interval_secs: u64,
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Platform health / global Proxmox feature collectors
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlatformConfig {
+    #[serde(default = "default_platform_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_platform_interval")]
+    pub interval_secs: u64,
+    #[serde(default = "default_backup_warn_hours")]
+    pub backup_warn_hours: u64,
+    #[serde(default = "default_backup_critical_hours")]
+    pub backup_critical_hours: u64,
+    #[serde(default = "default_task_long_running_minutes")]
+    pub task_long_running_minutes: u64,
+    #[serde(default = "default_snapshot_warn_days")]
+    pub snapshot_warn_days: u64,
+    #[serde(default = "default_snapshot_max_count")]
+    pub snapshot_max_count: usize,
+    #[serde(default = "default_zfs_usage_threshold")]
+    pub zfs_usage_threshold: f64,
+    #[serde(default = "default_security_enabled")]
+    pub security_enabled: bool,
+}
+
+impl Default for PlatformConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_platform_enabled(),
+            interval_secs: default_platform_interval(),
+            backup_warn_hours: default_backup_warn_hours(),
+            backup_critical_hours: default_backup_critical_hours(),
+            task_long_running_minutes: default_task_long_running_minutes(),
+            snapshot_warn_days: default_snapshot_warn_days(),
+            snapshot_max_count: default_snapshot_max_count(),
+            zfs_usage_threshold: default_zfs_usage_threshold(),
+            security_enabled: default_security_enabled(),
+        }
+    }
+}
+
+fn default_platform_enabled() -> bool { true }
+fn default_platform_interval() -> u64 { 60 }
+fn default_backup_warn_hours() -> u64 { 48 }
+fn default_backup_critical_hours() -> u64 { 72 }
+fn default_task_long_running_minutes() -> u64 { 60 }
+fn default_snapshot_warn_days() -> u64 { 7 }
+fn default_snapshot_max_count() -> usize { 5 }
+fn default_zfs_usage_threshold() -> f64 { 80.0 }
+fn default_security_enabled() -> bool { true }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CertificateConfig {
+    #[serde(default = "default_cert_warn_days")]
+    pub warn_days: u64,
+    #[serde(default = "default_cert_critical_days")]
+    pub critical_days: u64,
+    #[serde(default)]
+    pub targets: Vec<CertificateTarget>,
+}
+
+impl Default for CertificateConfig {
+    fn default() -> Self {
+        Self {
+            warn_days: default_cert_warn_days(),
+            critical_days: default_cert_critical_days(),
+            targets: vec![],
+        }
+    }
+}
+
+fn default_cert_warn_days() -> u64 { 30 }
+fn default_cert_critical_days() -> u64 { 7 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CertificateTarget {
+    pub name: String,
+    pub url: String,
 }
 
 fn default_api_interval() -> u64 {

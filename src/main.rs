@@ -211,6 +211,21 @@ alert_retention_days = 30
 mode = "standalone"
 server_url = "http://127.0.0.1:{listen_port}"
 shared_secret = "change_me"
+
+[platform]
+enabled = true
+interval_secs = 60
+backup_warn_hours = 48
+backup_critical_hours = 72
+task_long_running_minutes = 60
+snapshot_warn_days = 7
+snapshot_max_count = 5
+zfs_usage_threshold = 80.0
+security_enabled = true
+
+[certificates]
+warn_days = 30
+critical_days = 7
 "#,
         insecure_tls = !verify_tls,
     );
@@ -1094,6 +1109,19 @@ async fn run(cfg: Config) -> Result<()> {
         let cfg_clone = log_cfg.clone();
         tokio::spawn(crate::collectors::app_logs::run_collector(
             cfg_clone, full_cfg_clone, dispatcher, ws_tx_clone
+        ));
+    }
+
+    // ── Task 9: Proxmox platform health ───────────────────────────────────
+    if cfg.platform.enabled {
+        let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+        tokio::spawn(crate::collectors::platform::run_collector(
+            cfg.platform.clone(),
+            cfg.certificates.clone(),
+            client.clone(),
+            nodes.clone(),
+            ws_tx.clone(),
+            dispatcher,
         ));
     }
 

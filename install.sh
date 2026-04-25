@@ -40,10 +40,23 @@ command -v curl >/dev/null 2>&1 || err "curl is required but not installed"
 
 info "Fetching latest release from GitHub..."
 
-# Try GitHub Releases API first
-RELEASE_URL=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-    | grep -o "https://.*${BINARY_NAME}-linux-x86_64[^\"]*" \
-    | head -1 || true)
+RELEASE_JSON=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)
+DEB_URL=$(echo "$RELEASE_JSON" | grep -o "https://.*${BINARY_NAME}\.deb[^\"]*" | head -1 || true)
+RELEASE_URL=$(echo "$RELEASE_JSON" | grep -o "https://.*${BINARY_NAME}-linux-amd64[^\"]*" | head -1 || true)
+
+if [[ -n "$DEB_URL" ]] && command -v dpkg >/dev/null 2>&1; then
+    info "Downloading Debian package: ${DEB_URL}"
+    TMP_DEB="$(mktemp /tmp/proxmox-sentinel.XXXXXX.deb)"
+    curl -sSL -o "${TMP_DEB}" "${DEB_URL}"
+    dpkg -i "${TMP_DEB}" || apt-get install -f -y
+    ok "Debian package installed"
+    if [[ ! -f "${CONFIG_DIR}/config.toml" ]]; then
+        "${INSTALL_DIR}/${BINARY_NAME}" init --force
+    fi
+    systemctl enable --now proxmox-sentinel || true
+    echo -e "${CYAN}Installation complete!${NC}"
+    exit 0
+fi
 
 if [[ -z "$RELEASE_URL" ]]; then
     # Fallback: try GitHub Actions artifact (manual download needed)
