@@ -455,7 +455,7 @@ impl ProxmoxClient {
 }
 
 fn raw_to_guest(raw: RawGuest, kind: GuestKind, node: &str) -> GuestStatus {
-    let tags = raw
+    let tags: Vec<String> = raw
         .tags
         .as_deref()
         .unwrap_or("")
