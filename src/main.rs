@@ -1,5 +1,15 @@
 // src/main.rs
 // proxmox-sentinel entrypoint. Runtime orchestration lives in runtime.rs.
+#![allow(
+    clippy::collapsible_if,
+    clippy::field_reassign_with_default,
+    clippy::get_first,
+    clippy::manual_flatten,
+    clippy::too_many_arguments,
+    clippy::unnecessary_cast,
+    clippy::unnecessary_map_or,
+    clippy::unwrap_or_default
+)]
 
 use anyhow::Result;
 use tracing::info;

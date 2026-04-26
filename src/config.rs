@@ -255,8 +255,10 @@ pub struct PlatformConfig {
     pub enabled: bool,
     #[serde(default = "default_platform_interval")]
     pub interval_secs: u64,
+    #[allow(dead_code)]
     #[serde(default = "default_backup_warn_hours")]
     pub backup_warn_hours: u64,
+    #[allow(dead_code)]
     #[serde(default = "default_backup_critical_hours")]
     pub backup_critical_hours: u64,
     #[serde(default = "default_task_long_running_minutes")]

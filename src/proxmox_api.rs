@@ -384,6 +384,7 @@ impl ProxmoxClient {
     }
 
     /// Run a command inside a VM via QEMU guest agent
+    #[allow(dead_code)]
     pub async fn vm_agent_exec(&self, node: &str, vmid: u32, cmd: &[&str]) -> Result<String> {
         self.vm_agent_exec_command(node, vmid, cmd.join(" ")).await
     }
