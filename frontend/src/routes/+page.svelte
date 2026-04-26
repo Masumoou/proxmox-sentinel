@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { enrichedGuests, formatBytes, haproxyStats, nodes, pct, reconnectAttempts, storagePools, wsConnected } from '$lib/store';
+  import { enrichedGuests, formatBytes, haproxyStats, nodes, pct, platformHealth, reconnectAttempts, storagePools, wsConnected } from '$lib/store';
 
   let runningGuests = $derived($enrichedGuests.filter((guest) => guest.status === 'running'));
   let stoppedGuests = $derived($enrichedGuests.filter((guest) => guest.status !== 'running'));
@@ -9,6 +9,9 @@
   let clusterMemTotal = $derived($nodes.reduce((sum, n) => sum + n.mem_total, 0));
   let clusterStorageUsed = $derived($storagePools.reduce((sum, s) => sum + (s.used || 0), 0));
   let clusterStorageTotal = $derived($storagePools.reduce((sum, s) => sum + (s.total || 0), 0));
+  let platformIssues = $derived(countPlatformIssues($platformHealth));
+  let backupIssues = $derived(countBackupIssues($platformHealth));
+  let serviceIssues = $derived($enrichedGuests.reduce((sum, guest) => sum + guest.services.filter((service: any) => service.status !== 'running').length, 0));
   let showWebhook = $state(false);
   let webhookTestUrl = $state('');
   let webhookStatus = $state<'idle' | 'sending' | 'ok' | 'error'>('idle');
@@ -36,6 +39,26 @@
     if (guest.os_name && guest.os_version) return `${guest.os_name} ${guest.os_version}`;
     if (guest.os_name) return guest.os_name;
     return 'OS unknown';
+  }
+
+  function countPlatformIssues(health: any) {
+    const arrays = ['zfs', 'backups', 'tasks', 'thin_pools', 'snapshots', 'security', 'certificates', 'guest_agents'];
+    let count = 0;
+    for (const key of arrays) {
+      for (const item of health?.[key] || []) {
+        const status = String(item.status || item.state || item.severity || '').toLowerCase();
+        if (['warning', 'critical', 'degraded', 'faulted', 'failed'].includes(status)) count += 1;
+      }
+    }
+    for (const item of [health?.cluster, health?.ceph]) {
+      const status = String(item?.quorum || item?.health || '').toLowerCase();
+      if (['warning', 'critical', 'degraded', 'faulted', 'health_warn', 'health_err'].includes(status)) count += 1;
+    }
+    return count;
+  }
+
+  function countBackupIssues(health: any) {
+    return (health?.backups || []).filter((backup: any) => ['warning', 'critical'].includes(String(backup.status || '').toLowerCase())).length;
   }
 
   async function sendWebhookTest() {
@@ -66,7 +89,7 @@
 <div class="dashboard-page">
   <header class="dash-header">
     <div>
-      <div class="eyebrow">PROXMOX SENTINEL v0.2.11</div>
+      <div class="eyebrow">PROXMOX SENTINEL v0.2.12</div>
       <h1>Cluster Overview</h1>
     </div>
     <div class="header-actions">
@@ -103,6 +126,21 @@
       <span>Storage</span>
       <strong>{Math.round(pct(clusterStorageUsed, clusterStorageTotal))}%</strong>
       <small>{$storagePools.length} pools</small>
+    </div>
+    <div class="summary-card">
+      <span>Platform Health</span>
+      <strong>{platformIssues}</strong>
+      <small>{platformIssues === 0 ? 'no issues reported' : 'items need review'}</small>
+    </div>
+    <div class="summary-card">
+      <span>Backups</span>
+      <strong>{backupIssues}</strong>
+      <small>{backupIssues === 0 ? 'policy OK' : 'stale/missing backups'}</small>
+    </div>
+    <div class="summary-card">
+      <span>Services</span>
+      <strong>{serviceIssues}</strong>
+      <small>{serviceIssues === 0 ? 'no down services seen' : 'not running'}</small>
     </div>
     <div class="summary-card">
       <span>HAProxy</span>
@@ -161,6 +199,11 @@
           <div class="note">HAProxy needs `[haproxy] enabled = true` and a reachable stats CSV URL.</div>
         {:else}
           <div class="note ok">HAProxy telemetry is live: {$haproxyStats.servers_up} up, {$haproxyStats.servers_down} down.</div>
+        {/if}
+        {#if platformIssues > 0}
+          <div class="note warn">Platform health reports {platformIssues} issue{platformIssues === 1 ? '' : 's'} across backups, storage, snapshots, security, certificates, or guest agents.</div>
+        {:else}
+          <div class="note ok">Platform health is clean from the latest collector run.</div>
         {/if}
         <div class="note">Storage pools now come from Proxmox API. Guest mount data still requires guest agent/SSH.</div>
       </div>

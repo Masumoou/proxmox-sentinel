@@ -297,6 +297,165 @@ The dashboard and API require auth when this is set. WebSocket handling is built
 
 Do not expose Sentinel directly to the internet. Use a VPN, WireGuard, Tailscale, or a TLS reverse proxy with authentication. Sentinel logs a startup warning when it is bound to `0.0.0.0` without dashboard auth.
 
+### Minimum Proxmox API Permissions
+
+Use a read-only token instead of an Administrator token. Recommended minimum privileges:
+
+```text
+Sys.Audit
+VM.Audit
+Datastore.Audit
+Pool.Audit
+SDN.Audit      # only if SDN features are used
+```
+
+The daemon still runs as root on the Proxmox host for local cgroup, LXC, and log access.
+
+### Custom Alert Rules
+
+Custom alert rules are configured with `[[alert_rules]]`. They are evaluated against live Proxmox API data, guest detail data, storage data, and discovered service state.
+
+Supported targets:
+
+```text
+node
+vm
+lxc
+guest
+service
+storage
+```
+
+Supported operators:
+
+```text
+>
+>=
+<
+<=
+==
+=
+!=
+```
+
+`duration_secs` means the condition must stay true for the configured duration before Sentinel fires the alert. If the condition becomes false, the timer resets.
+
+Examples:
+
+```toml
+[[alert_rules]]
+name = "vm-101-cpu-high"
+target = "vm"
+vmid = 101
+metric = "cpu"
+operator = ">"
+threshold = 86
+duration_secs = 120
+severity = "warning"
+
+[[alert_rules]]
+name = "vm-101-stopped"
+target = "vm"
+vmid = 101
+metric = "status"
+operator = "=="
+value = "stopped"
+duration_secs = 60
+severity = "critical"
+
+[[alert_rules]]
+name = "vm-101-nginx-down"
+target = "service"
+vmid = 101
+service = "nginx"
+condition = "down"
+duration_secs = 60
+severity = "critical"
+
+[[alert_rules]]
+name = "pve-node-memory-high"
+target = "node"
+node = "pve-01"
+metric = "memory"
+operator = ">"
+threshold = 90
+duration_secs = 300
+severity = "warning"
+
+[[alert_rules]]
+name = "local-lvm-usage-high"
+target = "storage"
+node = "pve-01"
+storage = "local-lvm"
+metric = "usage"
+operator = ">"
+threshold = 85
+duration_secs = 300
+severity = "warning"
+```
+
+Service rules support these conditions:
+
+```text
+down
+not_running
+failed
+inactive
+dead
+missing
+running
+```
+
+`down` remains backward compatible and means the service is missing or not running.
+
+### Backup Policy
+
+Backup policy controls which guests require fresh backup artifacts. Sentinel checks real Proxmox storage content and local vzdump files, then applies policy to avoid false positives.
+
+Important fields:
+
+```toml
+[backup_policy]
+enabled = true
+default_required = true
+ignore_stopped_guests = true
+ignore_templates = true
+warn_hours = 48
+critical_hours = 72
+exclude_vmids = [9000, 9001]
+include_tags = []
+exclude_tags = ["nobackup", "test", "template"]
+```
+
+Tag rules override the default backup window:
+
+```toml
+[[backup_policy.tag_rules]]
+tag = "critical"
+warn_hours = 24
+critical_hours = 36
+required = true
+
+[[backup_policy.tag_rules]]
+tag = "daily-backup"
+warn_hours = 36
+critical_hours = 48
+required = true
+
+[[backup_policy.tag_rules]]
+tag = "nobackup"
+warn_hours = 48
+critical_hours = 72
+required = false
+```
+
+Practical behavior:
+
+- A VM tagged `critical` must have a newer backup than the shorter critical window.
+- A VM tagged `daily-backup` gets its own daily window.
+- A VM tagged `nobackup`, `test`, or `template` is ignored by default.
+- Templates and stopped guests are ignored by default to reduce noisy alerts.
+
 ### Webhook Alerts
 
 Set:

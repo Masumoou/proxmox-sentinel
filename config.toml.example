@@ -183,6 +183,8 @@ required       = false
 
 # ── Custom Alert Rules ──────────────────────────────────────────────────────
 # Duration prevents flapping: condition must stay true for duration_secs.
+# Operators: >, >=, <, <=, ==, =, !=
+# Service conditions: down, not_running, failed, inactive, dead, missing, running
 # [[alert_rules]]
 # name = "web01-cpu-high"
 # enabled = true

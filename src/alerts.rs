@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 
 use tracing::{error, info, warn};
 
+use crate::alert_channels::{AlertChannel, AlertNotification};
 use crate::collectors::logs::LogAlert;
 use crate::config::{AlertConfig, AlertSeverity};
 use crate::proxmox_api::{GuestStatus, NodeStatus};
@@ -59,7 +60,7 @@ pub enum Alert {
     #[allow(dead_code)]
     AppVersionMismatch { name: String, expected: String, found: String },
     PlatformIssue { key: String, severity: String, summary: String },
-    CustomRuleTriggered { name: String, severity: String, summary: String },
+    CustomRuleTriggered { name: String, scope: String, severity: String, summary: String },
     Test { message: String },
 }
 
@@ -90,7 +91,7 @@ impl Alert {
             Alert::AppStorageFull { name, .. } => format!("app_storage:{name}"),
             Alert::AppVersionMismatch { name, .. } => format!("app_version:{name}"),
             Alert::PlatformIssue { key, .. } => format!("platform:{key}"),
-            Alert::CustomRuleTriggered { name, .. } => format!("custom_rule:{name}"),
+            Alert::CustomRuleTriggered { name, scope, .. } => format!("custom_rule:{name}:{scope}"),
             Alert::Test { .. } => format!("test_alert:{}", chrono::Utc::now().timestamp()),
         }
     }
@@ -200,30 +201,13 @@ impl Alert {
 
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Webhook payload (Alertmanager-compatible)
-// ──────────────────────────────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-struct WebhookPayload {
-    alerts: Vec<WebhookAlert>,
-}
-
-#[derive(Serialize)]
-struct WebhookAlert {
-    status: &'static str,
-    labels: HashMap<String, String>,
-    annotations: HashMap<String, String>,
-    #[serde(rename = "generatorURL")]
-    generator_url: String,
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // Alert dispatcher
 // ──────────────────────────────────────────────────────────────────────────────
 
 pub struct AlertDispatcher {
     cfg: AlertConfig,
     http: Option<Client>,
+    channels: Vec<AlertChannel>,
     silence_map: Arc<Mutex<HashMap<String, Instant>>>,
     storage: Option<Arc<Storage>>,
 }
@@ -233,19 +217,24 @@ impl AlertDispatcher {
         if cfg.webhook_url.as_deref().map(str::trim).unwrap_or("").is_empty() {
             cfg.webhook_url = None;
         }
-        let http = if cfg.enabled {
-            cfg.webhook_url.as_ref().map(|_| {
+        let mut channels = Vec::new();
+        if let Some(url) = cfg.webhook_url.clone() {
+            channels.push(AlertChannel::webhook(url));
+        }
+        let http = if cfg.enabled && !channels.is_empty() {
+            Some(
                 Client::builder()
                     .timeout(Duration::from_secs(10))
                     .build()
-                    .expect("HTTP client")
-            })
+                    .expect("HTTP client"),
+            )
         } else {
             None
         };
         Self {
             cfg,
             http,
+            channels,
             silence_map: SHARED_SILENCE_MAP.clone(),
             storage,
         }
@@ -283,28 +272,17 @@ impl AlertDispatcher {
             }
         }
 
-        // Webhook dispatch
+        // Alert channel dispatch
         if self.cfg.enabled {
-            if let Some(ref url) = self.cfg.webhook_url {
-                if let Some(ref client) = self.http {
-                    let mut labels = HashMap::new();
-                    labels.insert("alertname".into(), key);
-                    labels.insert("severity".into(), severity.to_string());
-
-                    let mut annotations = HashMap::new();
-                    annotations.insert("summary".into(), summary);
-
-                    let payload = WebhookPayload {
-                        alerts: vec![WebhookAlert {
-                            status: "firing",
-                            labels,
-                            annotations,
-                            generator_url: String::new(),
-                        }],
-                    };
-
-                    if let Err(e) = client.post(url).json(&payload).send().await {
-                        error!("Webhook failed: {e}");
+            if let Some(ref client) = self.http {
+                let notification = AlertNotification {
+                    key,
+                    severity: severity.to_string(),
+                    summary,
+                };
+                for channel in &self.channels {
+                    if let Err(e) = channel.send(client, &notification).await {
+                        error!("Alert channel '{}' failed: {e}", channel.name());
                     }
                 }
             }

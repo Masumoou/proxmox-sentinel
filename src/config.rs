@@ -485,6 +485,25 @@ impl AlertRuleConfig {
         if target == "service" && self.service.is_none() {
             anyhow::bail!("alert_rules.{} requires service", self.name);
         }
+        if let Some(condition) = self.condition.as_deref().map(str::to_ascii_lowercase) {
+            if !matches!(
+                condition.as_str(),
+                "down"
+                    | "not_running"
+                    | "failed"
+                    | "inactive"
+                    | "dead"
+                    | "missing"
+                    | "running"
+                    | "up"
+                    | "active"
+                    | "stopped"
+                    | "activating"
+                    | "unknown"
+            ) {
+                anyhow::bail!("alert_rules.{} condition '{}' is unsupported", self.name, condition);
+            }
+        }
         if let Some(op) = self.operator.as_deref() {
             if !matches!(op, ">" | ">=" | "<" | "<=" | "==" | "=" | "!=") {
                 anyhow::bail!("alert_rules.{} operator '{}' is unsupported", self.name, op);

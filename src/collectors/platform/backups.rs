@@ -272,3 +272,93 @@ fn parse_backup_timestamp(name: &str) -> Option<i64> {
         .ok()
         .map(|dt| dt.and_utc().timestamp())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxmox_api::{GuestKind, GuestStatus};
+
+    fn guest(vmid: u32, status: &str, tags: &[&str], template: bool) -> GuestStatus {
+        GuestStatus {
+            vmid,
+            name: format!("guest-{vmid}"),
+            kind: GuestKind::Vm,
+            status: status.to_string(),
+            cpu_usage: 0.0,
+            cpu_count: 2,
+            mem_used: 0,
+            mem_total: 0,
+            disk_read: 0,
+            disk_write: 0,
+            net_in: 0,
+            net_out: 0,
+            uptime: 0,
+            node: "pve1".to_string(),
+            ip_address: None,
+            tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            os_name: None,
+            os_version: None,
+            template,
+        }
+    }
+
+    #[test]
+    fn backup_policy_excludes_vmid() {
+        let cfg = PlatformConfig::default();
+        let mut policy = BackupPolicyConfig::default();
+        policy.exclude_vmids = vec![101];
+        let requirement = backup_requirement(&cfg, &policy, &guest(101, "running", &[], false));
+        assert!(!requirement.required);
+    }
+
+    #[test]
+    fn backup_policy_excludes_tag() {
+        let cfg = PlatformConfig::default();
+        let policy = BackupPolicyConfig::default();
+        let requirement = backup_requirement(&cfg, &policy, &guest(101, "running", &["test"], false));
+        assert!(!requirement.required);
+    }
+
+    #[test]
+    fn backup_policy_requires_included_tag() {
+        let cfg = PlatformConfig::default();
+        let mut policy = BackupPolicyConfig::default();
+        policy.include_tags = vec!["backup".to_string()];
+        assert!(backup_requirement(&cfg, &policy, &guest(101, "running", &["backup"], false)).required);
+        assert!(!backup_requirement(&cfg, &policy, &guest(102, "running", &["dev"], false)).required);
+    }
+
+    #[test]
+    fn backup_policy_critical_tag_uses_shorter_window() {
+        let cfg = PlatformConfig::default();
+        let policy = BackupPolicyConfig::default();
+        let requirement = backup_requirement(&cfg, &policy, &guest(101, "running", &["critical"], false));
+        assert!(requirement.required);
+        assert_eq!(requirement.warn_hours, 24);
+        assert_eq!(requirement.critical_hours, 36);
+    }
+
+    #[test]
+    fn backup_policy_nobackup_tag_is_not_required() {
+        let cfg = PlatformConfig::default();
+        let policy = BackupPolicyConfig::default();
+        let requirement = backup_requirement(&cfg, &policy, &guest(101, "running", &["nobackup"], false));
+        assert!(!requirement.required);
+    }
+
+    #[test]
+    fn backup_policy_ignores_templates() {
+        let cfg = PlatformConfig::default();
+        let policy = BackupPolicyConfig::default();
+        let requirement = backup_requirement(&cfg, &policy, &guest(9000, "running", &[], true));
+        assert!(!requirement.required);
+    }
+
+    #[test]
+    fn backup_policy_ignores_stopped_guests() {
+        let cfg = PlatformConfig::default();
+        let policy = BackupPolicyConfig::default();
+        let requirement = backup_requirement(&cfg, &policy, &guest(101, "stopped", &[], false));
+        assert!(!requirement.required);
+    }
+}
