@@ -562,21 +562,27 @@ impl MetricsServer {
             });
         let state = AppState { tx: self.tx, expected_auth, storage: self.storage };
 
-        let mut app = Router::new()
-            .route("/health", get(health_handler))
+        let mut protected = Router::new()
             .route("/api/status", get(status_handler))
             .route("/api/v1/alerts/test", post(test_alert_handler))
             .route("/api/v1/alerts/recent", get(recent_alerts_handler))
             .route("/api/v1/history/node/{node}/metrics", get(node_history_handler))
             .route("/api/v1/apps/{name}/history", get(app_history_handler))
             .route("/ws", get(ws_handler))
-            .fallback(static_handler)
-            .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
-            .with_state(state);
+            .fallback(static_handler);
 
         if self.prometheus_enabled {
-            app = app.route("/metrics", get(metrics_handler));
+            protected = protected.route("/metrics", get(metrics_handler));
         }
+
+        if state.expected_auth.is_some() {
+            protected = protected.route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+        }
+
+        let mut app = Router::new()
+            .route("/health", get(health_handler))
+            .merge(protected)
+            .with_state(state);
 
         if let Some(hub_state) = self.hub_state {
             app = app.merge(crate::cluster::hub_router(hub_state));
