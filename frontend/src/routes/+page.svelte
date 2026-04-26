@@ -89,7 +89,7 @@
 <div class="dashboard-page">
   <header class="dash-header">
     <div>
-      <div class="eyebrow">PROXMOX SENTINEL v0.2.13</div>
+      <div class="eyebrow">PROXMOX SENTINEL v0.2.14</div>
       <h1>Cluster Overview</h1>
     </div>
     <div class="header-actions">

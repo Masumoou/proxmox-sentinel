@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.14
+
+- Fixed release-readiness refactor compile issues in `init` and runtime cluster wiring.
+- Built the frontend before Rust clippy/tests in CI so `rust-embed` always has dashboard assets.
+- Supersedes v0.2.13, whose GitHub Actions run exposed the refactor issues above.
+
 ## v0.2.13
 
 - Re-ran repository-wide Rust formatting so the public CI release checks pass cleanly.

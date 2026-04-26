@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, interval};
-use tracing::{debug, warn};
+use tracing::debug;
 
 mod backups;
 mod ceph;

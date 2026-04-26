@@ -23,20 +23,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config libsqlite3-dev
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: cargo fmt
-        run: cargo fmt --check
-
-      - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: cargo test
-        run: cargo test --all
-
       - name: Setup Node.js
         if: hashFiles('frontend/package.json') != ''
         uses: actions/setup-node@v6
@@ -51,3 +37,17 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --all

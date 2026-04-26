@@ -10,6 +10,7 @@ use crate::alert_rules::{
     AlertRuleEvaluator, ServiceRuleState, normalize_service_name, service_state_map,
 };
 use crate::alerts::{self, Alert, AlertDispatcher};
+use crate::cluster;
 use crate::collectors::haproxy::HaproxyCollector;
 use crate::collectors::logs::{CONTAINER_LOGS, LogCollector, PROXMOX_HOST_LOGS};
 use crate::collectors::lxc::LxcCollector;

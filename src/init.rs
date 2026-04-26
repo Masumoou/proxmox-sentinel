@@ -181,3 +181,50 @@ WantedBy=multi-user.target
     println!("Next: systemctl daemon-reload && systemctl enable --now proxmox-sentinel");
     Ok(())
 }
+
+fn prompt(label: &str, default: &str) -> Result<String> {
+    print!("{label} [{default}]: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let value = input.trim();
+
+    if value.is_empty() {
+        Ok(default.to_string())
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn prompt_secret(label: &str) -> Result<String> {
+    print!("{label}: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let value = input.trim();
+
+    if value.is_empty() {
+        anyhow::bail!("{label} cannot be empty");
+    }
+
+    Ok(value.to_string())
+}
+
+fn prompt_bool(label: &str, default: bool) -> Result<bool> {
+    let default_label = if default { "Y/n" } else { "y/N" };
+    print!("{label} [{default_label}]: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let value = input.trim().to_ascii_lowercase();
+
+    match value.as_str() {
+        "" => Ok(default),
+        "y" | "yes" | "true" | "1" => Ok(true),
+        "n" | "no" | "false" | "0" => Ok(false),
+        _ => anyhow::bail!("{label} expects yes or no"),
+    }
+}
