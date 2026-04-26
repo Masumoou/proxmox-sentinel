@@ -64,6 +64,7 @@ pub struct GuestStatus {
     pub tags: Vec<String>,
     pub os_name: Option<String>,
     pub os_version: Option<String>,
+    pub template: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -169,6 +170,7 @@ struct RawGuest {
     netout: Option<u64>,
     uptime: Option<u64>,
     tags: Option<String>,
+    template: Option<u8>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -508,6 +510,7 @@ fn raw_to_guest(raw: RawGuest, kind: GuestKind, node: &str) -> GuestStatus {
         tags,
         os_name,
         os_version,
+        template: raw.template.unwrap_or(0) == 1,
     }
 }
 

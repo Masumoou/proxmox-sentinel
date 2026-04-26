@@ -59,6 +59,7 @@ pub enum Alert {
     #[allow(dead_code)]
     AppVersionMismatch { name: String, expected: String, found: String },
     PlatformIssue { key: String, severity: String, summary: String },
+    CustomRuleTriggered { name: String, severity: String, summary: String },
     Test { message: String },
 }
 
@@ -89,6 +90,7 @@ impl Alert {
             Alert::AppStorageFull { name, .. } => format!("app_storage:{name}"),
             Alert::AppVersionMismatch { name, .. } => format!("app_version:{name}"),
             Alert::PlatformIssue { key, .. } => format!("platform:{key}"),
+            Alert::CustomRuleTriggered { name, .. } => format!("custom_rule:{name}"),
             Alert::Test { .. } => format!("test_alert:{}", chrono::Utc::now().timestamp()),
         }
     }
@@ -109,6 +111,11 @@ impl Alert {
             | Alert::OomKilled { .. } => "critical",
             Alert::VmConnectionLost { .. } => "warning",
             Alert::PlatformIssue { severity, .. } => match severity.as_str() {
+                "critical" => "critical",
+                "info" => "info",
+                _ => "warning",
+            },
+            Alert::CustomRuleTriggered { severity, .. } => match severity.as_str() {
                 "critical" => "critical",
                 "info" => "info",
                 _ => "warning",
@@ -183,6 +190,7 @@ impl Alert {
             Alert::AppVersionMismatch { name, expected, found } =>
                 format!("Application {name} version mismatch: expected {expected}, found {found}"),
             Alert::PlatformIssue { summary, .. } => summary.clone(),
+            Alert::CustomRuleTriggered { summary, .. } => summary.clone(),
             Alert::Test { message } =>
                 format!("SENTINEL TEST ALERT: {message}"),
         }

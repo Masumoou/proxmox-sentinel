@@ -44,7 +44,11 @@ pub struct Config {
     #[serde(default)]
     pub platform: PlatformConfig,
     #[serde(default)]
+    pub backup_policy: BackupPolicyConfig,
+    #[serde(default)]
     pub certificates: CertificateConfig,
+    #[serde(default)]
+    pub alert_rules: Vec<AlertRuleConfig>,
 }
 
 impl Config {
@@ -80,6 +84,10 @@ impl Config {
             }
         }
         self.platform.validate()?;
+        self.backup_policy.validate()?;
+        for rule in &self.alert_rules {
+            rule.validate()?;
+        }
         Ok(())
     }
 }
@@ -265,6 +273,16 @@ pub struct PlatformConfig {
     pub lvmthin_metadata_critical_pct: f64,
     #[serde(default = "default_security_enabled")]
     pub security_enabled: bool,
+    #[serde(default)]
+    pub exclude_backup_vmids: Vec<u32>,
+    #[serde(default)]
+    pub exclude_guest_agent_vmids: Vec<u32>,
+    #[serde(default)]
+    pub exclude_snapshot_vmids: Vec<u32>,
+    #[serde(default = "default_true")]
+    pub ignore_templates: bool,
+    #[serde(default = "default_true")]
+    pub ignore_stopped_guests_for_backup: bool,
 }
 
 impl Default for PlatformConfig {
@@ -283,6 +301,11 @@ impl Default for PlatformConfig {
             lvmthin_metadata_warn_pct: default_lvmthin_metadata_warn_pct(),
             lvmthin_metadata_critical_pct: default_lvmthin_metadata_critical_pct(),
             security_enabled: default_security_enabled(),
+            exclude_backup_vmids: vec![],
+            exclude_guest_agent_vmids: vec![],
+            exclude_snapshot_vmids: vec![],
+            ignore_templates: true,
+            ignore_stopped_guests_for_backup: true,
         }
     }
 }
@@ -306,6 +329,7 @@ impl PlatformConfig {
 
 fn default_platform_enabled() -> bool { true }
 fn default_platform_interval() -> u64 { 60 }
+fn default_true() -> bool { true }
 fn default_backup_warn_hours() -> u64 { 48 }
 fn default_backup_critical_hours() -> u64 { 72 }
 fn default_task_long_running_minutes() -> u64 { 60 }
@@ -324,6 +348,153 @@ fn validate_pct(name: &str, value: f64) -> Result<()> {
     }
     Ok(())
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BackupPolicyConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub default_required: bool,
+    #[serde(default = "default_true")]
+    pub ignore_stopped_guests: bool,
+    #[serde(default = "default_true")]
+    pub ignore_templates: bool,
+    #[serde(default = "default_backup_warn_hours")]
+    pub warn_hours: u64,
+    #[serde(default = "default_backup_critical_hours")]
+    pub critical_hours: u64,
+    #[serde(default)]
+    pub exclude_vmids: Vec<u32>,
+    #[serde(default)]
+    pub include_tags: Vec<String>,
+    #[serde(default)]
+    pub exclude_tags: Vec<String>,
+    #[serde(default)]
+    pub tag_rules: Vec<BackupTagRule>,
+}
+
+impl Default for BackupPolicyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_required: true,
+            ignore_stopped_guests: true,
+            ignore_templates: true,
+            warn_hours: default_backup_warn_hours(),
+            critical_hours: default_backup_critical_hours(),
+            exclude_vmids: vec![],
+            include_tags: vec![],
+            exclude_tags: vec!["nobackup".to_string(), "test".to_string(), "template".to_string()],
+            tag_rules: vec![
+                BackupTagRule {
+                    tag: "critical".to_string(),
+                    warn_hours: 24,
+                    critical_hours: 36,
+                    required: true,
+                },
+                BackupTagRule {
+                    tag: "daily-backup".to_string(),
+                    warn_hours: 36,
+                    critical_hours: 48,
+                    required: true,
+                },
+                BackupTagRule {
+                    tag: "nobackup".to_string(),
+                    warn_hours: default_backup_warn_hours(),
+                    critical_hours: default_backup_critical_hours(),
+                    required: false,
+                },
+            ],
+        }
+    }
+}
+
+impl BackupPolicyConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.warn_hours == 0 || self.critical_hours == 0 {
+            anyhow::bail!("backup_policy warn_hours/critical_hours must be greater than 0");
+        }
+        if self.warn_hours > self.critical_hours {
+            anyhow::bail!("backup_policy.warn_hours must be <= critical_hours");
+        }
+        for rule in &self.tag_rules {
+            if rule.warn_hours == 0 || rule.critical_hours == 0 {
+                anyhow::bail!("backup_policy.tag_rules warn_hours/critical_hours must be greater than 0");
+            }
+            if rule.warn_hours > rule.critical_hours {
+                anyhow::bail!("backup_policy tag rule '{}' warn_hours must be <= critical_hours", rule.tag);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BackupTagRule {
+    pub tag: String,
+    #[serde(default = "default_backup_warn_hours")]
+    pub warn_hours: u64,
+    #[serde(default = "default_backup_critical_hours")]
+    pub critical_hours: u64,
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlertRuleConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub name: String,
+    pub target: String,
+    #[serde(default)]
+    pub vmid: Option<u32>,
+    #[serde(default)]
+    pub node: Option<String>,
+    #[serde(default)]
+    pub storage: Option<String>,
+    #[serde(default)]
+    pub service: Option<String>,
+    #[serde(default)]
+    pub metric: Option<String>,
+    #[serde(default)]
+    pub operator: Option<String>,
+    #[serde(default)]
+    pub threshold: Option<f64>,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub condition: Option<String>,
+    #[serde(default = "default_alert_rule_duration")]
+    pub duration_secs: u64,
+    #[serde(default = "default_severity")]
+    pub severity: AlertSeverity,
+}
+
+impl AlertRuleConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.name.trim().is_empty() {
+            anyhow::bail!("alert_rules entry has empty name");
+        }
+        let target = self.target.to_lowercase();
+        if !matches!(target.as_str(), "node" | "vm" | "lxc" | "guest" | "service" | "storage") {
+            anyhow::bail!("alert_rules.{} target '{}' is unsupported", self.name, self.target);
+        }
+        if matches!(target.as_str(), "vm" | "lxc" | "guest") && self.metric.is_none() {
+            anyhow::bail!("alert_rules.{} requires metric", self.name);
+        }
+        if target == "service" && self.service.is_none() {
+            anyhow::bail!("alert_rules.{} requires service", self.name);
+        }
+        if let Some(op) = self.operator.as_deref() {
+            if !matches!(op, ">" | ">=" | "<" | "<=" | "==" | "=" | "!=") {
+                anyhow::bail!("alert_rules.{} operator '{}' is unsupported", self.name, op);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn default_alert_rule_duration() -> u64 { 60 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CertificateConfig {
@@ -510,7 +681,10 @@ pub struct LxcServiceChecks {
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct VmServiceChecks {
-    pub ip: String,
+    #[serde(default)]
+    pub vmid: Option<u32>,
+    #[serde(default)]
+    pub ip: Option<String>,
     pub user: Option<String>,
     pub checks: Vec<String>,
 }

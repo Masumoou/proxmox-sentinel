@@ -1,6 +1,6 @@
 [package]
 name = "proxmox-sentinel"
-version = "0.2.9"
+version = "0.2.10"
 edition = "2024"
 description = "Lightweight agentless Proxmox monitoring daemon"
 
@@ -38,6 +38,7 @@ notify = "8"
 
 # SSH for VM log collection
 ssh2 = "0.9"
+openssl = "0.10"
 
 # CLI args
 clap = { version = "4", features = ["derive"] }

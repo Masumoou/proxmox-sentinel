@@ -25,6 +25,7 @@ use tracing::debug;
 pub struct LxcDetailedStats {
     pub vmid: u32,
     pub name: String,
+    pub ip_address: Option<String>,
     pub os_name: Option<String>,
     pub os_version: Option<String>,
     pub cgroup: CgroupStats,
@@ -118,6 +119,7 @@ impl LxcCollector {
         let services = Self::list_services(vmid).await.unwrap_or_default();
         let disk_mounts = Self::read_disk_usage(vmid).await.unwrap_or_default();
         let (os_name, os_version) = Self::read_os_release(vmid).await.unwrap_or((None, None));
+        let ip_address = Self::read_ip_address(vmid).await;
         let processes = match init_pid {
             Some(pid) => Self::read_top_processes(pid).await.unwrap_or_default(),
             None => vec![],
@@ -126,6 +128,7 @@ impl LxcCollector {
         LxcDetailedStats {
             vmid,
             name: name.to_string(),
+            ip_address,
             os_name,
             os_version,
             cgroup,
@@ -226,6 +229,25 @@ impl LxcCollector {
             return Ok((None, None));
         }
         Ok(parse_os_release(&String::from_utf8_lossy(&out.stdout)))
+    }
+
+    async fn read_ip_address(vmid: u32) -> Option<String> {
+        let out = Command::new("pct")
+            .args([
+                "exec",
+                &vmid.to_string(),
+                "--",
+                "sh",
+                "-lc",
+                "hostname -I 2>/dev/null || ip -4 -o addr show scope global 2>/dev/null",
+            ])
+            .output()
+            .await
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        parse_first_ipv4(&String::from_utf8_lossy(&out.stdout))
     }
 
     async fn find_init_pid(vmid: u32) -> Option<u32> {
@@ -546,6 +568,18 @@ fn parse_os_release(output: &str) -> (Option<String>, Option<String>) {
     (name, version)
 }
 
+fn parse_first_ipv4(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .filter_map(|token| token.split('/').next())
+        .find(|ip| {
+            ip.parse::<std::net::Ipv4Addr>()
+                .map(|addr| !addr.is_loopback() && !addr.is_link_local())
+                .unwrap_or(false)
+        })
+        .map(str::to_string)
+}
+
 #[allow(dead_code)]
 async fn tail_file(path: &str, lines: usize) -> Result<Vec<String>> {
     let out = Command::new("tail")
@@ -557,4 +591,17 @@ async fn tail_file(path: &str, lines: usize) -> Result<Vec<String>> {
         .lines()
         .map(str::to_string)
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_first_ipv4;
+
+    #[test]
+    fn parses_first_global_ipv4() {
+        assert_eq!(
+            parse_first_ipv4("127.0.0.1 10.10.207.45 169.254.1.1"),
+            Some("10.10.207.45".to_string())
+        );
+    }
 }

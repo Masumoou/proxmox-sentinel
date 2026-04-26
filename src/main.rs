@@ -28,6 +28,7 @@ use tracing_subscriber::EnvFilter;
 use serde_json::json;
 
 mod alerts;
+mod alert_rules;
 mod cluster;
 mod collectors;
 mod config;
@@ -37,6 +38,7 @@ mod proxmox_api;
 mod storage;
 
 use alerts::{Alert, AlertDispatcher};
+use alert_rules::AlertRuleEvaluator;
 use collectors::lxc::LxcCollector;
 use collectors::logs::{LogCollector, CONTAINER_LOGS, PROXMOX_HOST_LOGS};
 use collectors::vm::VmCollector;
@@ -226,6 +228,34 @@ lvmthin_data_critical_pct = 95.0
 lvmthin_metadata_warn_pct = 75.0
 lvmthin_metadata_critical_pct = 90.0
 security_enabled = true
+exclude_backup_vmids = []
+exclude_guest_agent_vmids = []
+exclude_snapshot_vmids = []
+ignore_templates = true
+ignore_stopped_guests_for_backup = true
+
+[backup_policy]
+enabled = true
+default_required = true
+ignore_stopped_guests = true
+ignore_templates = true
+warn_hours = 48
+critical_hours = 72
+exclude_vmids = []
+include_tags = []
+exclude_tags = ["nobackup", "test", "template"]
+
+[[backup_policy.tag_rules]]
+tag = "critical"
+warn_hours = 24
+critical_hours = 36
+required = true
+
+[[backup_policy.tag_rules]]
+tag = "daily-backup"
+warn_hours = 36
+critical_hours = 48
+required = true
 
 [certificates]
 warn_days = 30
@@ -405,11 +435,28 @@ fn service_is_healthy(state: &str, sub_state: &str) -> bool {
     matches!(state, "active" | "started") && !matches!(sub_state, "failed" | "dead")
 }
 
+fn is_public_bind_without_auth(cfg: &Config) -> bool {
+    let auth_empty = cfg.metrics.auth.as_deref().map(str::trim).unwrap_or("").is_empty();
+    let public_bind = matches!(
+        cfg.metrics.listen_addr.as_str(),
+        "0.0.0.0" | "::" | "[::]" | ""
+    );
+    auth_empty && public_bind
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Main loop
 // ──────────────────────────────────────────────────────────────────────────────
 
 async fn run(cfg: Config) -> Result<()> {
+    if is_public_bind_without_auth(&cfg) {
+        warn!(
+            "WARNING: Sentinel is listening on {}:{} without dashboard auth. Do not expose this endpoint to untrusted networks.",
+            cfg.metrics.listen_addr,
+            cfg.metrics.listen_port
+        );
+    }
+
     let client = Arc::new(ProxmoxClient::new(&cfg.proxmox)?);
 
     // WebSocket broadcast channel (created first so LogCollector can use it)
@@ -544,6 +591,7 @@ async fn run(cfg: Config) -> Result<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(api_secs));
             let mut dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
+            let mut rule_evaluator = AlertRuleEvaluator::new();
             let mut vm_last_node: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
 
             loop {
@@ -582,6 +630,9 @@ async fn run(cfg: Config) -> Result<()> {
                             for a in dispatcher.check_node(&status) {
                                 dispatcher.dispatch(a).await;
                             }
+                            for a in rule_evaluator.evaluate_node(&cfg.alert_rules, &status) {
+                                dispatcher.dispatch(a).await;
+                            }
                         }
                         Err(e) => warn!("Node status {node}: {e}"),
                     }
@@ -610,10 +661,15 @@ async fn run(cfg: Config) -> Result<()> {
                                     "mem": guest.mem_used,
                                     "maxmem": guest.mem_total,
                                     "os_name": guest.os_name.clone(),
-                                    "os_version": guest.os_version.clone()
+                                    "os_version": guest.os_version.clone(),
+                                    "tags": guest.tags.clone(),
+                                    "template": guest.template
                                 }));
 
                                 for a in dispatcher.check_guest(guest) {
+                                    dispatcher.dispatch(a).await;
+                                }
+                                for a in rule_evaluator.evaluate_guest(&cfg.alert_rules, guest) {
                                     dispatcher.dispatch(a).await;
                                 }
 
@@ -666,6 +722,9 @@ async fn run(cfg: Config) -> Result<()> {
                                         })
                                         .await;
                                 }
+                                for a in rule_evaluator.evaluate_storage(&cfg.alert_rules, s) {
+                                    dispatcher.dispatch(a).await;
+                                }
                             }
                         }
                         Err(e) => warn!("Storage status {node}: {e}"),
@@ -699,6 +758,7 @@ async fn run(cfg: Config) -> Result<()> {
             let mut watched_lxcs: std::collections::HashSet<u32> = std::collections::HashSet::new();
             let mut discovered_lxc_services: std::collections::HashMap<u32, std::collections::HashSet<String>> = std::collections::HashMap::new();
             let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
+            let mut rule_evaluator = AlertRuleEvaluator::new();
 
             loop {
                 ticker.tick().await;
@@ -785,6 +845,14 @@ async fn run(cfg: Config) -> Result<()> {
                                     baseline.extend(active_services.iter().cloned());
                                 }
                             }
+                            for alert in rule_evaluator.evaluate_services(
+                                &cfg_inner.alert_rules,
+                                guest.vmid,
+                                &guest.node,
+                                &active_services,
+                            ) {
+                                dispatcher.dispatch(alert).await;
+                            }
                         }
 
                         // Build disk mounts JSON
@@ -800,6 +868,7 @@ async fn run(cfg: Config) -> Result<()> {
                         lxc_details.push(json!({
                             "vmid": guest.vmid,
                             "name": guest.name,
+                            "ip": stats.ip_address.clone(),
                             "os_name": stats.os_name.clone(),
                             "os_version": stats.os_version.clone(),
                             "services": svcs,
@@ -864,6 +933,7 @@ async fn run(cfg: Config) -> Result<()> {
             let mut conn_failures: std::collections::HashMap<u32, u8> = std::collections::HashMap::new();
             let mut discovered_vm_services: std::collections::HashMap<u32, std::collections::HashSet<String>> = std::collections::HashMap::new();
             let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
+            let mut rule_evaluator = AlertRuleEvaluator::new();
 
             loop {
                 ticker.tick().await;
@@ -918,8 +988,10 @@ async fn run(cfg: Config) -> Result<()> {
                         }).collect();
 
                         if !vm_stats.services.is_empty() {
-                            if let Some(ref ip) = vm_stats.ip_address {
-                                if let Some(tracked) = cfg_inner.services.vm.iter().find(|v| &v.ip == ip) {
+                            if let Some(tracked) = cfg_inner.services.vm.iter().find(|v| {
+                                v.vmid == Some(guest.vmid)
+                                    || vm_stats.ip_address.as_ref().is_some_and(|ip| v.ip.as_ref() == Some(ip))
+                            }) {
                                     for service in &tracked.checks {
                                         let name = normalize_service_name(service);
                                         if !active_services.contains(&name) {
@@ -930,7 +1002,6 @@ async fn run(cfg: Config) -> Result<()> {
                                             }).await;
                                         }
                                     }
-                                }
                             }
 
                             if cfg_inner.services.alert_on_discovered {
@@ -951,6 +1022,14 @@ async fn run(cfg: Config) -> Result<()> {
                                     }
                                     baseline.extend(active_services.iter().cloned());
                                 }
+                            }
+                            for alert in rule_evaluator.evaluate_services(
+                                &cfg_inner.alert_rules,
+                                guest.vmid,
+                                node,
+                                &active_services,
+                            ) {
+                                dispatcher.dispatch(alert).await;
                             }
                         }
 
@@ -1155,6 +1234,7 @@ async fn run(cfg: Config) -> Result<()> {
         let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
         tokio::spawn(crate::collectors::platform::run_collector(
             cfg.platform.clone(),
+            cfg.backup_policy.clone(),
             cfg.certificates.clone(),
             client.clone(),
             nodes.clone(),

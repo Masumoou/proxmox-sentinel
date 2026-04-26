@@ -18,6 +18,22 @@ The project is designed for Proxmox users who want a simple install, useful visi
 - Includes `proxmox-sentinel init` for first-time setup.
 - Includes `proxmox-sentinel doctor` for installation and visibility checks.
 
+## What Sentinel Is Best At
+
+Sentinel focuses on Proxmox operational health, not only raw CPU/RAM graphs.
+
+It helps answer:
+
+- Which VMs or LXCs have stale or missing backups?
+- Are ZFS, LVM-thin, Ceph, NFS, and Proxmox storage pools healthy?
+- Are snapshots growing old or piling up?
+- Did a Proxmox backup, migration, restore, clone, or snapshot task fail?
+- Are QEMU Guest Agents responding so IPs, OS details, filesystems, and services are visible?
+- Are certificates close to expiry?
+- Are logs showing OOM, disk, SSH, database, PHP, web server, or application errors?
+
+Core collectors focus on Proxmox, guests, storage, backups, tasks, snapshots, ZFS/Ceph/LVM, alerts, dashboard, and Prometheus. Postgres, Redis, HAProxy, object storage, app metrics, and app logs are optional integrations.
+
 ## Important Visibility Rules
 
 Sentinel can see different levels of detail depending on guest type.
@@ -211,6 +227,53 @@ lvmthin_data_critical_pct = 95.0
 lvmthin_metadata_warn_pct = 75.0
 lvmthin_metadata_critical_pct = 90.0
 security_enabled = true
+exclude_backup_vmids = [9000, 9001]
+exclude_guest_agent_vmids = []
+exclude_snapshot_vmids = []
+ignore_templates = true
+ignore_stopped_guests_for_backup = true
+
+[backup_policy]
+enabled = true
+default_required = true
+ignore_stopped_guests = true
+ignore_templates = true
+warn_hours = 48
+critical_hours = 72
+exclude_vmids = [9000, 9001]
+include_tags = []
+exclude_tags = ["nobackup", "test", "template"]
+
+[[backup_policy.tag_rules]]
+tag = "critical"
+warn_hours = 24
+critical_hours = 36
+required = true
+
+[[backup_policy.tag_rules]]
+tag = "daily-backup"
+warn_hours = 36
+critical_hours = 48
+required = true
+
+[[alert_rules]]
+name = "web01-cpu-high"
+target = "vm"
+vmid = 101
+metric = "cpu"
+operator = ">"
+threshold = 86
+duration_secs = 120
+severity = "warning"
+
+[[alert_rules]]
+name = "web01-nginx-down"
+target = "service"
+vmid = 101
+service = "nginx"
+condition = "down"
+duration_secs = 60
+severity = "critical"
 
 [certificates]
 warn_days = 30
@@ -231,6 +294,8 @@ auth = "admin:change-this-password"
 ```
 
 The dashboard and API require auth when this is set. WebSocket handling is built to work with the dashboard session.
+
+Do not expose Sentinel directly to the internet. Use a VPN, WireGuard, Tailscale, or a TLS reverse proxy with authentication. Sentinel logs a startup warning when it is bound to `0.0.0.0` without dashboard auth.
 
 ### Webhook Alerts
 
@@ -348,16 +413,24 @@ Alerts include degraded pools, scrub errors, high usage, checksum errors, and mi
 
 ### Backups
 
-Collected from Proxmox task history:
+Collected from Proxmox storage content APIs, local `vzdump` backup artifacts, and task history:
 
 - backup tasks
+- real `vzdump-*` backup artifacts on Proxmox backup-capable storage
 - last successful backup per guest
 - failed backup tasks
 - backup age
 - guests with no recent backup
 - warning and critical backup age thresholds
 
-PBS-specific API support can be layered on top of this, but the current release already detects backup health from Proxmox-visible task history.
+Backup monitoring is policy-driven to reduce false positives:
+
+- `exclude_vmids` skips guests that should never alert
+- `exclude_tags = ["nobackup", "test", "template"]` skips tagged guests
+- `ignore_stopped_guests` and `ignore_templates` are enabled by default
+- tag rules such as `critical` and `daily-backup` can use stricter backup windows
+
+Task history is still used for failed or long-running backup jobs, but freshness is based on actual backup files when Proxmox exposes them.
 
 ### Tasks
 
@@ -409,12 +482,11 @@ Checks include:
 - enterprise/no-subscription repository posture
 - firewall status
 - guest agent visibility posture
-- API/token posture where available from readable config/API data
-- old snapshots and templates where visible
+- snapshot and guest visibility signals where available
 
 ### Snapshots
 
-Collected with Proxmox tooling:
+Collected with Proxmox API snapshot metadata:
 
 - snapshot count per guest
 - snapshot age where available
@@ -572,7 +644,42 @@ Built-in alert categories include:
 - Ceph health issue
 - LVM-thin pressure
 
-Thresholds are configured in `config.toml`. Per-guest and per-service custom rules are part of the alert-rule model and should be added to config as the rule schema grows.
+Thresholds are configured in `config.toml`.
+
+Custom alert rules support per-node, per-VM, per-LXC, per-storage, and per-service checks:
+
+```toml
+[[alert_rules]]
+name = "postgres-vm-memory-high"
+target = "vm"
+vmid = 205
+metric = "memory"
+operator = ">"
+threshold = 80
+duration_secs = 180
+severity = "critical"
+
+[[alert_rules]]
+name = "database-vm-down"
+target = "vm"
+vmid = 205
+metric = "status"
+operator = "=="
+value = "stopped"
+duration_secs = 60
+severity = "critical"
+
+[[alert_rules]]
+name = "web01-nginx-down"
+target = "service"
+vmid = 101
+service = "nginx"
+condition = "down"
+duration_secs = 60
+severity = "critical"
+```
+
+Rules use duration tracking so brief spikes do not immediately page you. Alert deduplication is shared across all collector tasks.
 
 ## Prometheus
 
@@ -756,6 +863,7 @@ Requirements:
 - Rust stable
 - Node.js 22+
 - npm
+- `pkg-config` and `libssl-dev` on Debian/Proxmox hosts
 - Linux target for release builds
 
 Build:

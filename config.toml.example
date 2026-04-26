@@ -13,6 +13,7 @@ listen_addr = "0.0.0.0"
 listen_port = 9101              # Prometheus will scrape :9101/metrics
 prometheus_enabled = true
 auth        = ""                # Optional Basic Auth. Example: "admin:secret"
+# SECURITY: if listen_addr is 0.0.0.0, set auth or put Sentinel behind VPN/reverse proxy.
 
 [logs]
 tail_lines  = 100               # How many lines to read on initial startup
@@ -103,7 +104,8 @@ alert_on_discovered = true
 # checks = ["apache2", "php8.3-fpm", "redis-server"]
 # 
 # [[services.vm]]
-# ip = "192.168.1.50"
+# vmid = 101
+# ip = "192.168.1.50"           # optional fallback/match if VMID is not convenient
 # user = "root"
 # checks = ["docker", "mariadb"]
 
@@ -144,6 +146,63 @@ lvmthin_data_critical_pct = 95.0
 lvmthin_metadata_warn_pct = 75.0
 lvmthin_metadata_critical_pct = 90.0
 security_enabled          = true
+exclude_backup_vmids      = [9000, 9001]
+exclude_guest_agent_vmids = []
+exclude_snapshot_vmids    = []
+ignore_templates          = true
+ignore_stopped_guests_for_backup = true
+
+# ── Backup Policy ───────────────────────────────────────────────────────────
+# Tag-aware policy avoids false positives for lab/test/templates.
+[backup_policy]
+enabled               = true
+default_required      = true
+ignore_stopped_guests = true
+ignore_templates      = true
+warn_hours            = 48
+critical_hours        = 72
+exclude_vmids         = [9000, 9001]
+include_tags          = []       # if set, only guests with these tags require backup
+exclude_tags          = ["nobackup", "test", "template"]
+
+[[backup_policy.tag_rules]]
+tag            = "critical"
+warn_hours     = 24
+critical_hours = 36
+required       = true
+
+[[backup_policy.tag_rules]]
+tag            = "daily-backup"
+warn_hours     = 36
+critical_hours = 48
+required       = true
+
+[[backup_policy.tag_rules]]
+tag            = "nobackup"
+required       = false
+
+# ── Custom Alert Rules ──────────────────────────────────────────────────────
+# Duration prevents flapping: condition must stay true for duration_secs.
+# [[alert_rules]]
+# name = "web01-cpu-high"
+# enabled = true
+# target = "vm"                  # node | vm | lxc | guest | service | storage
+# vmid = 101
+# metric = "cpu"
+# operator = ">"
+# threshold = 86
+# duration_secs = 120
+# severity = "warning"
+
+# [[alert_rules]]
+# name = "web01-nginx-down"
+# enabled = true
+# target = "service"
+# vmid = 101
+# service = "nginx"
+# condition = "down"
+# duration_secs = 60
+# severity = "critical"
 
 [certificates]
 warn_days     = 30
