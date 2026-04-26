@@ -1,5 +1,5 @@
-use super::*;
 use super::tasks::is_backup_task;
+use super::*;
 
 pub(super) async fn collect_backups(
     cfg: &PlatformConfig,
@@ -45,7 +45,9 @@ pub(super) async fn collect_backups(
         let task = latest_task.get(&guest.vmid).copied();
         let last_backup_ts = artifact.map(|a| a.ctime);
         let age_hours = last_backup_ts.map(|ts| (now.saturating_sub(ts)) / 3600);
-        let latest_task_status = task.map(|t| t.status.clone()).unwrap_or_else(|| "none".to_string());
+        let latest_task_status = task
+            .map(|t| t.status.clone())
+            .unwrap_or_else(|| "none".to_string());
         let status = if !requirement.required {
             "ignored".to_string()
         } else {
@@ -54,23 +56,38 @@ pub(super) async fn collect_backups(
                 Some(age) if age >= requirement.warn_hours as i64 => "warning",
                 Some(_) => "ok",
                 None => "critical",
-            }.to_string()
+            }
+            .to_string()
         };
 
         if requirement.required && status != "ok" {
             let summary = if let Some(age) = age_hours {
-                format!("Guest {} ({}) latest backup artifact is {age}h old", guest.name, guest.vmid)
+                format!(
+                    "Guest {} ({}) latest backup artifact is {age}h old",
+                    guest.name, guest.vmid
+                )
             } else {
-                format!("Guest {} ({}) has no backup artifact found", guest.name, guest.vmid)
+                format!(
+                    "Guest {} ({}) has no backup artifact found",
+                    guest.name, guest.vmid
+                )
             };
-            alerts.push(platform_alert(format!("backup:{}:{}", guest.vmid, status), &status, summary));
+            alerts.push(platform_alert(
+                format!("backup:{}:{}", guest.vmid, status),
+                &status,
+                summary,
+            ));
         }
 
         rows.push(BackupHealth {
             vmid: guest.vmid,
             name: guest.name.clone(),
             node: guest.node.clone(),
-            kind: match guest.kind { GuestKind::Vm => "qemu", GuestKind::Lxc => "lxc" }.to_string(),
+            kind: match guest.kind {
+                GuestKind::Vm => "qemu",
+                GuestKind::Lxc => "lxc",
+            }
+            .to_string(),
             last_backup_ts,
             age_hours,
             status,
@@ -111,7 +128,11 @@ fn backup_requirement(
         };
     }
 
-    if let Some(rule) = policy.tag_rules.iter().find(|rule| tag_matches(&guest.tags, std::slice::from_ref(&rule.tag))) {
+    if let Some(rule) = policy
+        .tag_rules
+        .iter()
+        .find(|rule| tag_matches(&guest.tags, std::slice::from_ref(&rule.tag)))
+    {
         return BackupRequirement {
             required: rule.required,
             warn_hours: rule.warn_hours,
@@ -119,7 +140,8 @@ fn backup_requirement(
         };
     }
 
-    let included_by_tag = policy.include_tags.is_empty() || tag_matches(&guest.tags, &policy.include_tags);
+    let included_by_tag =
+        policy.include_tags.is_empty() || tag_matches(&guest.tags, &policy.include_tags);
     BackupRequirement {
         required: policy.default_required && included_by_tag,
         warn_hours: policy.warn_hours,
@@ -129,7 +151,9 @@ fn backup_requirement(
 
 fn tag_matches(guest_tags: &[String], policy_tags: &[String]) -> bool {
     guest_tags.iter().any(|guest_tag| {
-        policy_tags.iter().any(|policy_tag| guest_tag.eq_ignore_ascii_case(policy_tag))
+        policy_tags
+            .iter()
+            .any(|policy_tag| guest_tag.eq_ignore_ascii_case(policy_tag))
     })
 }
 
@@ -152,9 +176,15 @@ pub(super) async fn collect_backup_artifacts(
             .iter()
             .filter(|s| s.enabled && s.active && s.content.split(',').any(|c| c.trim() == "backup"))
         {
-            match client.storage_content(node, &storage.storage, "backup").await {
+            match client
+                .storage_content(node, &storage.storage, "backup")
+                .await
+            {
                 Ok(rows) => {
-                    artifacts.extend(rows.iter().filter_map(|row| parse_backup_artifact(row, node, &storage.storage)));
+                    artifacts.extend(
+                        rows.iter()
+                            .filter_map(|row| parse_backup_artifact(row, node, &storage.storage)),
+                    );
                 }
                 Err(e) => debug!("backup content {node}/{}: {e}", storage.storage),
             }
@@ -175,13 +205,20 @@ pub(super) async fn collect_backup_artifacts(
     dedup.into_values().collect()
 }
 
-
-pub(super) fn parse_backup_artifact(row: &Value, node: &str, storage: &str) -> Option<BackupArtifact> {
-    let volid = str_field(row, "volid").or_else(|| str_field(row, "volume")).unwrap_or_default();
+pub(super) fn parse_backup_artifact(
+    row: &Value,
+    node: &str,
+    storage: &str,
+) -> Option<BackupArtifact> {
+    let volid = str_field(row, "volid")
+        .or_else(|| str_field(row, "volume"))
+        .unwrap_or_default();
     let vmid = int_field(row, "vmid")
         .and_then(|v| u32::try_from(v).ok())
         .or_else(|| parse_vmid_from_backup_name(&volid))?;
-    let ctime = int_field(row, "ctime").or_else(|| parse_backup_timestamp(&volid)).unwrap_or(0);
+    let ctime = int_field(row, "ctime")
+        .or_else(|| parse_backup_timestamp(&volid))
+        .unwrap_or(0);
     Some(BackupArtifact {
         vmid,
         node: node.to_string(),
@@ -237,7 +274,13 @@ async fn scan_backup_dir(path: &str, artifacts: &mut Vec<BackupArtifact>) {
                 storage: "local-scan".to_string(),
                 volid: path.display().to_string(),
                 ctime: parse_backup_timestamp(name)
-                    .or_else(|| metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64))
+                    .or_else(|| {
+                        metadata
+                            .as_ref()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64)
+                    })
                     .unwrap_or(0),
                 size_bytes: metadata.map(|m| m.len()),
             });
@@ -315,7 +358,8 @@ mod tests {
     fn backup_policy_excludes_tag() {
         let cfg = PlatformConfig::default();
         let policy = BackupPolicyConfig::default();
-        let requirement = backup_requirement(&cfg, &policy, &guest(101, "running", &["test"], false));
+        let requirement =
+            backup_requirement(&cfg, &policy, &guest(101, "running", &["test"], false));
         assert!(!requirement.required);
     }
 
@@ -324,15 +368,20 @@ mod tests {
         let cfg = PlatformConfig::default();
         let mut policy = BackupPolicyConfig::default();
         policy.include_tags = vec!["backup".to_string()];
-        assert!(backup_requirement(&cfg, &policy, &guest(101, "running", &["backup"], false)).required);
-        assert!(!backup_requirement(&cfg, &policy, &guest(102, "running", &["dev"], false)).required);
+        assert!(
+            backup_requirement(&cfg, &policy, &guest(101, "running", &["backup"], false)).required
+        );
+        assert!(
+            !backup_requirement(&cfg, &policy, &guest(102, "running", &["dev"], false)).required
+        );
     }
 
     #[test]
     fn backup_policy_critical_tag_uses_shorter_window() {
         let cfg = PlatformConfig::default();
         let policy = BackupPolicyConfig::default();
-        let requirement = backup_requirement(&cfg, &policy, &guest(101, "running", &["critical"], false));
+        let requirement =
+            backup_requirement(&cfg, &policy, &guest(101, "running", &["critical"], false));
         assert!(requirement.required);
         assert_eq!(requirement.warn_hours, 24);
         assert_eq!(requirement.critical_hours, 36);
@@ -342,7 +391,8 @@ mod tests {
     fn backup_policy_nobackup_tag_is_not_required() {
         let cfg = PlatformConfig::default();
         let policy = BackupPolicyConfig::default();
-        let requirement = backup_requirement(&cfg, &policy, &guest(101, "running", &["nobackup"], false));
+        let requirement =
+            backup_requirement(&cfg, &policy, &guest(101, "running", &["nobackup"], false));
         assert!(!requirement.required);
     }
 

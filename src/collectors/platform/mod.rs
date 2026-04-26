@@ -4,12 +4,12 @@ use crate::proxmox_api::{GuestKind, ProxmoxClient};
 use anyhow::Result;
 use reqwest::Url;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::broadcast;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tracing::{debug, warn};
 
 mod backups;
@@ -183,9 +183,18 @@ pub async fn run_collector(
         let ceph = collect_ceph(&mut alerts).await;
         let thin_pools = collect_thin_pools(&cfg, &mut alerts).await;
         let guests = collect_all_guests(client.clone(), nodes.clone()).await;
-        let guest_agents = collect_guest_agent_health(&cfg, client.clone(), &guests, &mut alerts).await;
+        let guest_agents =
+            collect_guest_agent_health(&cfg, client.clone(), &guests, &mut alerts).await;
         let backup_artifacts = collect_backup_artifacts(client.clone(), nodes.clone()).await;
-        let backups = collect_backups(&cfg, &backup_policy, &guests, &tasks, &backup_artifacts, &mut alerts).await;
+        let backups = collect_backups(
+            &cfg,
+            &backup_policy,
+            &guests,
+            &tasks,
+            &backup_artifacts,
+            &mut alerts,
+        )
+        .await;
         let snapshots = collect_snapshots(&cfg, client.clone(), &guests, &mut alerts).await;
         let security = if cfg.security_enabled {
             collect_security(&guest_agents, &mut alerts).await
@@ -210,24 +219,30 @@ pub async fn run_collector(
             dispatcher.dispatch(alert).await;
         }
 
-        let _ = ws_tx.send(json!({
-            "type": "platform_health",
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "zfs": zfs,
-            "backups": backups,
-            "tasks": tasks,
-            "cluster": cluster,
-            "ceph": ceph,
-            "thin_pools": thin_pools,
-            "snapshots": snapshots,
-            "security": security,
-            "certificates": certificates,
-            "guest_agents": guest_agents,
-        }).to_string());
+        let _ = ws_tx.send(
+            json!({
+                "type": "platform_health",
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "zfs": zfs,
+                "backups": backups,
+                "tasks": tasks,
+                "cluster": cluster,
+                "ceph": ceph,
+                "thin_pools": thin_pools,
+                "snapshots": snapshots,
+                "security": security,
+                "certificates": certificates,
+                "guest_agents": guest_agents,
+            })
+            .to_string(),
+        );
     }
 }
 
-async fn collect_all_guests(client: Arc<ProxmoxClient>, nodes: Arc<Vec<String>>) -> Vec<crate::proxmox_api::GuestStatus> {
+async fn collect_all_guests(
+    client: Arc<ProxmoxClient>,
+    nodes: Arc<Vec<String>>,
+) -> Vec<crate::proxmox_api::GuestStatus> {
     let mut guests = Vec::new();
     for node in nodes.iter() {
         match client.list_guests(node).await {
@@ -239,7 +254,11 @@ async fn collect_all_guests(client: Arc<ProxmoxClient>, nodes: Arc<Vec<String>>)
 }
 
 fn platform_alert(key: String, severity: &str, summary: String) -> Alert {
-    Alert::PlatformIssue { key, severity: severity.into(), summary }
+    Alert::PlatformIssue {
+        key,
+        severity: severity.into(),
+        summary,
+    }
 }
 
 async fn run_cmd(cmd: &str, args: &[&str]) -> Result<String> {
@@ -251,21 +270,27 @@ async fn run_cmd(cmd: &str, args: &[&str]) -> Result<String> {
 }
 
 fn str_field(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_i64().map(|n| n.to_string())))
+    value.get(key).and_then(|v| {
+        v.as_str()
+            .map(str::to_string)
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+    })
 }
 
 fn int_field(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
+    value
+        .get(key)
+        .and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::backups::parse_backup_artifact;
     use super::lvmthin::parse_lvmthin_json;
     use super::snapshots::parse_snapshot_api_rows;
     use super::tasks::parse_tasks_json;
     use super::zfs::{parse_zfs_pools, scrub_has_errors};
+    use super::*;
 
     #[test]
     fn parses_zfs_pool_status_and_errors() {
@@ -342,10 +367,13 @@ errors: Permanent errors have been detected
     #[test]
     fn parses_snapshot_api_metadata() {
         let now = 1_700_086_400;
-        let rows: Vec<Value> = serde_json::from_str(r#"[
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[
           {"name":"current"},
           {"name":"pre-upgrade","description":"before updates","snaptime":1700000000}
-        ]"#).unwrap();
+        ]"#,
+        )
+        .unwrap();
         let snapshots = parse_snapshot_api_rows(&rows, now);
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].name, "pre-upgrade");
@@ -354,11 +382,14 @@ errors: Permanent errors have been detected
 
     #[test]
     fn parses_backup_artifact_from_storage_content() {
-        let row: Value = serde_json::from_str(r#"{
+        let row: Value = serde_json::from_str(
+            r#"{
           "volid": "backup:backup/vzdump-qemu-104-2026_04_24-12_30_00.vma.zst",
           "size": 123456,
           "ctime": 1777033800
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         let artifact = parse_backup_artifact(&row, "pve1", "backup").unwrap();
         assert_eq!(artifact.vmid, 104);
         assert_eq!(artifact.size_bytes, Some(123456));

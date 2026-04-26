@@ -208,7 +208,14 @@ impl<'a> VmCollector<'a> {
         // Get primary IP
         let ip = self.client.vm_agent_ip(node, vmid).await;
 
-        Ok(AgentData { ip, os_name, os_version, mounts, processes, services })
+        Ok(AgentData {
+            ip,
+            os_name,
+            os_version,
+            mounts,
+            processes,
+            services,
+        })
     }
 
     // ── SSH path ───────────────────────────────────────────────────────────
@@ -218,11 +225,9 @@ impl<'a> VmCollector<'a> {
         let ip_owned = ip.to_string();
 
         // SSH is blocking; run on thread pool
-        tokio::task::spawn_blocking(move || {
-            ssh_collect(&ip_owned, &cfg)
-        })
-        .await
-        .context("SSH task panicked")?
+        tokio::task::spawn_blocking(move || ssh_collect(&ip_owned, &cfg))
+            .await
+            .context("SSH task panicked")?
     }
 
     /// Tail the last N lines of a log file on a VM via SSH
@@ -349,13 +354,8 @@ fn ssh_connect(ip: &str, cfg: &SshConfig) -> Result<Session> {
     sess.handshake().context("SSH handshake")?;
 
     // Try public-key auth
-    sess.userauth_pubkey_file(
-        &cfg.user,
-        None,
-        Path::new(&cfg.private_key_path),
-        None,
-    )
-    .with_context(|| format!("SSH auth to {ip}"))?;
+    sess.userauth_pubkey_file(&cfg.user, None, Path::new(&cfg.private_key_path), None)
+        .with_context(|| format!("SSH auth to {ip}"))?;
 
     if !sess.authenticated() {
         anyhow::bail!("SSH auth failed to {ip}");
@@ -396,7 +396,12 @@ fn ssh_collect(ip: &str, cfg: &SshConfig) -> Result<SshData> {
     )?;
     let mounts = parse_df_output(&df_out);
 
-    Ok(SshData { os_name, os_version, services, mounts })
+    Ok(SshData {
+        os_name,
+        os_version,
+        services,
+        mounts,
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -404,7 +409,9 @@ fn ssh_collect(ip: &str, cfg: &SshConfig) -> Result<SshData> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn parse_df_output(output: &str) -> Vec<VmDiskMount> {
-    let skip_fstypes = ["tmpfs", "devtmpfs", "proc", "sysfs", "devpts", "cgroup2", "squashfs"];
+    let skip_fstypes = [
+        "tmpfs", "devtmpfs", "proc", "sysfs", "devpts", "cgroup2", "squashfs",
+    ];
     let mut mounts = Vec::new();
 
     for line in output.lines().skip(1) {

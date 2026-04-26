@@ -18,7 +18,11 @@ pub struct ServiceRuleState {
 }
 
 impl ServiceRuleState {
-    pub fn new(name: impl Into<String>, state: impl Into<String>, sub_state: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        state: impl Into<String>,
+        sub_state: impl Into<String>,
+    ) -> Self {
         Self {
             name: normalize_service_name(&name.into()),
             state: normalize_service_state(&state.into()),
@@ -28,7 +32,10 @@ impl ServiceRuleState {
 
     pub fn running(&self) -> bool {
         matches!(self.state.as_str(), "active" | "running" | "started")
-            && !matches!(self.sub_state.as_str(), "failed" | "dead" | "inactive" | "unknown" | "missing")
+            && !matches!(
+                self.sub_state.as_str(),
+                "failed" | "dead" | "inactive" | "unknown" | "missing"
+            )
     }
 
     pub fn failed(&self) -> bool {
@@ -77,8 +84,15 @@ impl AlertRuleEvaluator {
     pub fn evaluate_node(&mut self, rules: &[AlertRuleConfig], node: &NodeStatus) -> Vec<Alert> {
         let now = self.now();
         let mut alerts = Vec::new();
-        for rule in rules.iter().filter(|rule| rule.enabled && target_is(rule, "node")) {
-            if rule.node.as_deref().is_some_and(|wanted| wanted != node.node) {
+        for rule in rules
+            .iter()
+            .filter(|rule| rule.enabled && target_is(rule, "node"))
+        {
+            if rule
+                .node
+                .as_deref()
+                .is_some_and(|wanted| wanted != node.node)
+            {
                 continue;
             }
             let Some(metric) = rule.metric.as_deref() else {
@@ -91,7 +105,9 @@ impl AlertRuleEvaluator {
                 "status" => compare_text(rule, &node.status),
                 _ => (false, format!("unsupported node metric '{metric}'")),
             };
-            if let Some(alert) = self.duration_alert(rule, &format!("node:{}", node.node), condition, detail, now) {
+            if let Some(alert) =
+                self.duration_alert(rule, &format!("node:{}", node.node), condition, detail, now)
+            {
                 alerts.push(alert);
             }
         }
@@ -101,11 +117,18 @@ impl AlertRuleEvaluator {
     pub fn evaluate_guest(&mut self, rules: &[AlertRuleConfig], guest: &GuestStatus) -> Vec<Alert> {
         let now = self.now();
         let mut alerts = Vec::new();
-        for rule in rules.iter().filter(|rule| rule.enabled && matches_guest_target(rule, guest)) {
+        for rule in rules
+            .iter()
+            .filter(|rule| rule.enabled && matches_guest_target(rule, guest))
+        {
             if rule.vmid.is_some_and(|wanted| wanted != guest.vmid) {
                 continue;
             }
-            if rule.node.as_deref().is_some_and(|wanted| wanted != guest.node) {
+            if rule
+                .node
+                .as_deref()
+                .is_some_and(|wanted| wanted != guest.node)
+            {
                 continue;
             }
             let Some(metric) = rule.metric.as_deref() else {
@@ -117,21 +140,42 @@ impl AlertRuleEvaluator {
                 "status" => compare_text(rule, &guest.status),
                 _ => (false, format!("unsupported guest metric '{metric}'")),
             };
-            if let Some(alert) = self.duration_alert(rule, &format!("guest:{}", guest.vmid), condition, detail, now) {
+            if let Some(alert) = self.duration_alert(
+                rule,
+                &format!("guest:{}", guest.vmid),
+                condition,
+                detail,
+                now,
+            ) {
                 alerts.push(alert);
             }
         }
         alerts
     }
 
-    pub fn evaluate_storage(&mut self, rules: &[AlertRuleConfig], storage: &StorageStatus) -> Vec<Alert> {
+    pub fn evaluate_storage(
+        &mut self,
+        rules: &[AlertRuleConfig],
+        storage: &StorageStatus,
+    ) -> Vec<Alert> {
         let now = self.now();
         let mut alerts = Vec::new();
-        for rule in rules.iter().filter(|rule| rule.enabled && target_is(rule, "storage")) {
-            if rule.node.as_deref().is_some_and(|wanted| wanted != storage.node) {
+        for rule in rules
+            .iter()
+            .filter(|rule| rule.enabled && target_is(rule, "storage"))
+        {
+            if rule
+                .node
+                .as_deref()
+                .is_some_and(|wanted| wanted != storage.node)
+            {
                 continue;
             }
-            if rule.storage.as_deref().is_some_and(|wanted| wanted != storage.storage) {
+            if rule
+                .storage
+                .as_deref()
+                .is_some_and(|wanted| wanted != storage.storage)
+            {
                 continue;
             }
             let metric = rule.metric.as_deref().unwrap_or("usage");
@@ -163,7 +207,10 @@ impl AlertRuleEvaluator {
     ) -> Vec<Alert> {
         let now = self.now();
         let mut alerts = Vec::new();
-        for rule in rules.iter().filter(|rule| rule.enabled && target_is(rule, "service")) {
+        for rule in rules
+            .iter()
+            .filter(|rule| rule.enabled && target_is(rule, "service"))
+        {
             if rule.vmid.is_some_and(|wanted| wanted != vmid) {
                 continue;
             }
@@ -180,7 +227,13 @@ impl AlertRuleEvaluator {
                 Some(state) => format!("service {service} is {}", state.label()),
                 None => format!("service {service} is missing"),
             };
-            if let Some(alert) = self.duration_alert(rule, &format!("service:{vmid}:{service}"), condition, detail, now) {
+            if let Some(alert) = self.duration_alert(
+                rule,
+                &format!("service:{vmid}:{service}"),
+                condition,
+                detail,
+                now,
+            ) {
                 alerts.push(alert);
             }
         }
@@ -208,7 +261,10 @@ impl AlertRuleEvaluator {
             name: rule.name.clone(),
             scope: scope.to_string(),
             severity: rule.severity.as_str().to_string(),
-            summary: format!("Custom alert rule '{}' matched {scope}: {detail}", rule.name),
+            summary: format!(
+                "Custom alert rule '{}' matched {scope}: {detail}",
+                rule.name
+            ),
         })
     }
 }
@@ -236,7 +292,9 @@ fn service_condition_matches(condition: &str, state: Option<&ServiceRuleState>) 
         "dead" => state.is_some_and(ServiceRuleState::dead),
         "activating" => state.is_some_and(ServiceRuleState::activating),
         "missing" => state.is_none(),
-        "unknown" => state.map(|s| s.state == "unknown" || s.sub_state == "unknown").unwrap_or(true),
+        "unknown" => state
+            .map(|s| s.state == "unknown" || s.sub_state == "unknown")
+            .unwrap_or(true),
         "down" | "not_running" | "stopped" => !state.is_some_and(ServiceRuleState::running),
         _ => false,
     }
@@ -275,7 +333,10 @@ fn compare_number(rule: &AlertRuleConfig, actual: f64) -> (bool, String) {
         "!=" => (actual - threshold).abs() >= f64::EPSILON,
         _ => false,
     };
-    (matched, format!("actual {actual:.1} {op} threshold {threshold:.1}"))
+    (
+        matched,
+        format!("actual {actual:.1} {op} threshold {threshold:.1}"),
+    )
 }
 
 fn compare_text(rule: &AlertRuleConfig, actual: &str) -> (bool, String) {
@@ -286,7 +347,10 @@ fn compare_text(rule: &AlertRuleConfig, actual: &str) -> (bool, String) {
         "!=" => !actual.eq_ignore_ascii_case(expected),
         _ => false,
     };
-    (matched, format!("actual '{actual}' {op} expected '{expected}'"))
+    (
+        matched,
+        format!("actual '{actual}' {op} expected '{expected}'"),
+    )
 }
 
 fn normalize_service_state(state: &str) -> String {
@@ -444,7 +508,12 @@ mod tests {
         stopped.operator = Some("==".into());
         stopped.value = Some("stopped".into());
 
-        assert_eq!(evaluator.evaluate_guest(&[stopped], &guest(GuestKind::Vm, "stopped")).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate_guest(&[stopped], &guest(GuestKind::Vm, "stopped"))
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -456,7 +525,12 @@ mod tests {
         cpu.operator = Some(">".into());
         cpu.threshold = Some(86.0);
 
-        assert_eq!(evaluator.evaluate_guest(&[cpu], &guest(GuestKind::Vm, "running")).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate_guest(&[cpu], &guest(GuestKind::Vm, "running"))
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -479,12 +553,22 @@ mod tests {
         down.condition = Some("down".into());
         let services = service_state_map([ServiceRuleState::new("nginx", "failed", "failed")]);
 
-        assert_eq!(evaluator.evaluate_services(&[down], 101, "pve1", &services).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate_services(&[down], 101, "pve1", &services)
+                .len(),
+            1
+        );
 
         let mut missing = rule("postgres-missing", "service");
         missing.service = Some("postgresql".into());
         missing.condition = Some("missing".into());
-        assert_eq!(evaluator.evaluate_services(&[missing], 101, "pve1", &services).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate_services(&[missing], 101, "pve1", &services)
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -493,9 +577,15 @@ mod tests {
         let mut up = rule("nginx-up", "service");
         up.service = Some("nginx".into());
         up.condition = Some("running".into());
-        let services = service_state_map([ServiceRuleState::new("nginx.service", "active", "running")]);
+        let services =
+            service_state_map([ServiceRuleState::new("nginx.service", "active", "running")]);
 
-        assert_eq!(evaluator.evaluate_services(&[up], 101, "pve1", &services).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate_services(&[up], 101, "pve1", &services)
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -504,9 +594,15 @@ mod tests {
         let mut dead = rule("nginx-dead", "service");
         dead.service = Some("nginx".into());
         dead.condition = Some("dead".into());
-        let services = service_state_map([ServiceRuleState::new("nginx.service", "inactive", "dead")]);
+        let services =
+            service_state_map([ServiceRuleState::new("nginx.service", "inactive", "dead")]);
 
-        assert_eq!(evaluator.evaluate_services(&[dead], 101, "pve1", &services).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate_services(&[dead], 101, "pve1", &services)
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -522,6 +618,11 @@ mod tests {
         ne.value = Some("running".into());
 
         assert_eq!(evaluator.evaluate_storage(&[lte], &storage()).len(), 1);
-        assert_eq!(evaluator.evaluate_guest(&[ne], &guest(GuestKind::Vm, "stopped")).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate_guest(&[ne], &guest(GuestKind::Vm, "stopped"))
+                .len(),
+            1
+        );
     }
 }

@@ -12,17 +12,11 @@
 //   bounces to its own WebSocket clients) to provide a unified dashboard.
 
 use anyhow::Result;
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::post,
-    Router,
-    Json,
-};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use reqwest::Client;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tracing::{error, info, debug, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::storage::Storage;
@@ -32,9 +26,12 @@ use crate::storage::Storage;
 // ──────────────────────────────────────────────────────────────────────────────
 
 pub async fn run_agent(cfg: Arc<Config>, mut rx: broadcast::Receiver<String>) {
-    let url = format!("{}/api/v1/ingest", cfg.cluster.server_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/api/v1/ingest",
+        cfg.cluster.server_url.trim_end_matches('/')
+    );
     let secret = cfg.cluster.shared_secret.clone();
-    
+
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -45,7 +42,8 @@ pub async fn run_agent(cfg: Arc<Config>, mut rx: broadcast::Receiver<String>) {
     loop {
         match rx.recv().await {
             Ok(payload) => {
-                let req = client.post(&url)
+                let req = client
+                    .post(&url)
                     .header("Authorization", format!("Bearer {}", secret))
                     .header("Content-Type", "application/json")
                     .body(payload);

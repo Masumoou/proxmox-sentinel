@@ -2,13 +2,13 @@
 
 use crate::alerts::{Alert, AlertDispatcher};
 use crate::config::AppMetricsConfig;
-use crate::storage::Storage;
 use crate::exporter::prometheus::update_app_metrics;
+use crate::storage::Storage;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::broadcast;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
 pub async fn run_collector(
@@ -27,7 +27,7 @@ pub async fn run_collector(
 
     loop {
         interval.tick().await;
-        
+
         match collect_metrics(&cfg).await {
             Ok(json_val) => {
                 failure_count = 0;
@@ -35,9 +35,16 @@ pub async fn run_collector(
             }
             Err(e) => {
                 failure_count += 1;
-                warn!("App Metrics collection failed for {}: {} (failure {}/3)", cfg.name, e, failure_count);
+                warn!(
+                    "App Metrics collection failed for {}: {} (failure {}/3)",
+                    cfg.name, e, failure_count
+                );
                 if failure_count >= 3 {
-                    dispatcher.dispatch(Alert::AppDown { name: cfg.name.clone() }).await;
+                    dispatcher
+                        .dispatch(Alert::AppDown {
+                            name: cfg.name.clone(),
+                        })
+                        .await;
                 }
             }
         }
@@ -47,30 +54,57 @@ pub async fn run_collector(
 async fn collect_metrics(cfg: &AppMetricsConfig) -> anyhow::Result<Value> {
     match cfg.kind.as_str() {
         "nextcloud_occ" => {
-            let vmid = cfg.target_vmid.ok_or_else(|| anyhow::anyhow!("nextcloud_occ requires target_vmid"))?;
-            let occ_path = cfg.command.as_deref().unwrap_or("/var/www/html/nextcloud/occ");
-            
+            let vmid = cfg
+                .target_vmid
+                .ok_or_else(|| anyhow::anyhow!("nextcloud_occ requires target_vmid"))?;
+            let occ_path = cfg
+                .command
+                .as_deref()
+                .unwrap_or("/var/www/html/nextcloud/occ");
+
             let output = Command::new("pct")
-                .args(["exec", &vmid.to_string(), "--", "sudo", "-u", "www-data", "php", occ_path, "serverinfo", "--output=json"])
+                .args([
+                    "exec",
+                    &vmid.to_string(),
+                    "--",
+                    "sudo",
+                    "-u",
+                    "www-data",
+                    "php",
+                    occ_path,
+                    "serverinfo",
+                    "--output=json",
+                ])
                 .output()
                 .await?;
 
             if !output.status.success() {
-                anyhow::bail!("occ command failed: {}", String::from_utf8_lossy(&output.stderr));
+                anyhow::bail!(
+                    "occ command failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
-            
+
             let val: Value = serde_json::from_slice(&output.stdout)?;
             Ok(val)
         }
         "http_json" => {
-            let url = cfg.endpoint_url.as_ref().ok_or_else(|| anyhow::anyhow!("http_json requires endpoint_url"))?;
-            let client = reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?;
+            let url = cfg
+                .endpoint_url
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("http_json requires endpoint_url"))?;
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()?;
             let res = client.get(url).send().await?;
             let val: Value = res.json().await?;
             Ok(val)
         }
         "shell_json" => {
-            let cmd = cfg.command.as_ref().ok_or_else(|| anyhow::anyhow!("shell_json requires command"))?;
+            let cmd = cfg
+                .command
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("shell_json requires command"))?;
             let output = if let Some(vmid) = cfg.target_vmid {
                 Command::new("pct")
                     .args(["exec", &vmid.to_string(), "--", "sh", "-c", cmd])
@@ -81,7 +115,10 @@ async fn collect_metrics(cfg: &AppMetricsConfig) -> anyhow::Result<Value> {
             };
 
             if !output.status.success() {
-                anyhow::bail!("shell command failed: {}", String::from_utf8_lossy(&output.stderr));
+                anyhow::bail!(
+                    "shell command failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
 
             let val: Value = serde_json::from_slice(&output.stdout)?;
@@ -106,16 +143,19 @@ async fn process_metrics(
                 if let Err(e) = storage.insert_app_metric(&cfg.name, &mapping.metric_name, num) {
                     warn!("Failed to save app metric {}: {}", mapping.metric_name, e);
                 }
-                
+
                 // Update prometheus
                 update_app_metrics(&cfg.name, &mapping.metric_name, num);
-                
+
                 // Add to mapped result for WS
-                mapped_metrics.insert(mapping.metric_name.clone(), serde_json::json!({
-                    "value": num,
-                    "label": mapping.label,
-                    "unit": mapping.unit
-                }));
+                mapped_metrics.insert(
+                    mapping.metric_name.clone(),
+                    serde_json::json!({
+                        "value": num,
+                        "label": mapping.label,
+                        "unit": mapping.unit
+                    }),
+                );
             }
         }
     }

@@ -1,7 +1,11 @@
-﻿use super::*;
+use super::*;
 
 pub(super) async fn collect_zfs(cfg: &PlatformConfig, alerts: &mut Vec<Alert>) -> Vec<ZfsPool> {
-    let list = run_cmd("zpool", &["list", "-H", "-o", "name,health,capacity,fragmentation"]).await;
+    let list = run_cmd(
+        "zpool",
+        &["list", "-H", "-o", "name,health,capacity,fragmentation"],
+    )
+    .await;
     let status = run_cmd("zpool", &["status"]).await.unwrap_or_default();
     let Ok(list) = list else {
         return Vec::new();
@@ -19,7 +23,11 @@ pub(super) async fn collect_zfs(cfg: &PlatformConfig, alerts: &mut Vec<Alert>) -
         if pool.capacity_pct >= cfg.zfs_usage_threshold {
             alerts.push(platform_alert(
                 format!("zfs_usage:{}", pool.name),
-                if pool.capacity_pct >= 95.0 { "critical" } else { "warning" },
+                if pool.capacity_pct >= 95.0 {
+                    "critical"
+                } else {
+                    "warning"
+                },
                 format!("ZFS pool {} usage at {:.1}%", pool.name, pool.capacity_pct),
             ));
         }
@@ -37,7 +45,10 @@ pub(super) async fn collect_zfs(cfg: &PlatformConfig, alerts: &mut Vec<Alert>) -
             alerts.push(platform_alert(
                 format!("zfs_scrub:{}", pool.name),
                 "warning",
-                format!("ZFS pool {} scrub reported errors: {}", pool.name, pool.scrub),
+                format!(
+                    "ZFS pool {} scrub reported errors: {}",
+                    pool.name, pool.scrub
+                ),
             ));
         }
     }
@@ -45,7 +56,12 @@ pub(super) async fn collect_zfs(cfg: &PlatformConfig, alerts: &mut Vec<Alert>) -
 }
 
 fn pct_text(value: &str) -> f64 {
-    value.trim().trim_end_matches('%').trim_end_matches('-').parse().unwrap_or(0.0)
+    value
+        .trim()
+        .trim_end_matches('%')
+        .trim_end_matches('-')
+        .parse()
+        .unwrap_or(0.0)
 }
 
 pub(super) fn parse_zfs_pools(list: &str, status: &str) -> Vec<ZfsPool> {
@@ -127,11 +143,22 @@ fn parse_vdev_errors(block: &str) -> (u64, u64, u64) {
         let Some(state) = cols.get(1) else {
             continue;
         };
-        if !matches!(*state, "ONLINE" | "DEGRADED" | "FAULTED" | "OFFLINE" | "UNAVAIL" | "REMOVED") {
+        if !matches!(
+            *state,
+            "ONLINE" | "DEGRADED" | "FAULTED" | "OFFLINE" | "UNAVAIL" | "REMOVED"
+        ) {
             continue;
         }
-        read = read.max(cols.get(cols.len().saturating_sub(3)).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0));
-        write = write.max(cols.get(cols.len().saturating_sub(2)).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0));
+        read = read.max(
+            cols.get(cols.len().saturating_sub(3))
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0),
+        );
+        write = write.max(
+            cols.get(cols.len().saturating_sub(2))
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0),
+        );
         cksum = cksum.max(cols.last().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0));
     }
     (read, write, cksum)
@@ -139,9 +166,13 @@ fn parse_vdev_errors(block: &str) -> (u64, u64, u64) {
 
 pub(super) fn scrub_has_errors(scrub: &str) -> bool {
     let lower = scrub.to_lowercase();
-    if lower.contains("with 0 errors") && (lower.contains("repaired 0b") || lower.contains("repaired 0 bytes")) {
+    if lower.contains("with 0 errors")
+        && (lower.contains("repaired 0b") || lower.contains("repaired 0 bytes"))
+    {
         return false;
     }
     lower.contains("with ") && lower.contains(" errors") && !lower.contains("with 0 errors")
-        || lower.contains("repaired") && !lower.contains("repaired 0b") && !lower.contains("repaired 0 bytes")
+        || lower.contains("repaired")
+            && !lower.contains("repaired 0b")
+            && !lower.contains("repaired 0 bytes")
 }

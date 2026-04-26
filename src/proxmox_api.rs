@@ -27,19 +27,19 @@ struct ApiResponse<T> {
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeStatus {
     pub node: String,
-    pub status: String,          // "online" | "offline"
-    pub cpu_usage: f64,          // 0.0 – 1.0
+    pub status: String, // "online" | "offline"
+    pub cpu_usage: f64, // 0.0 – 1.0
     pub cpu_count: u32,
-    pub mem_used: u64,           // bytes
-    pub mem_total: u64,          // bytes
-    pub swap_used: u64,          // bytes
-    pub swap_total: u64,         // bytes
-    pub disk_used: u64,          // bytes (root fs)
-    pub disk_total: u64,         // bytes
+    pub mem_used: u64,   // bytes
+    pub mem_total: u64,  // bytes
+    pub swap_used: u64,  // bytes
+    pub swap_total: u64, // bytes
+    pub disk_used: u64,  // bytes (root fs)
+    pub disk_total: u64, // bytes
     pub load_avg1: f64,
     pub load_avg5: f64,
     pub load_avg15: f64,
-    pub uptime: u64,             // seconds
+    pub uptime: u64, // seconds
     pub kernel_version: String,
     pub pve_version: String,
 }
@@ -48,13 +48,13 @@ pub struct NodeStatus {
 pub struct GuestStatus {
     pub vmid: u32,
     pub name: String,
-    pub kind: GuestKind,         // VM or LXC
-    pub status: String,          // "running" | "stopped" | "paused"
-    pub cpu_usage: f64,          // 0.0 – 1.0
+    pub kind: GuestKind, // VM or LXC
+    pub status: String,  // "running" | "stopped" | "paused"
+    pub cpu_usage: f64,  // 0.0 – 1.0
     pub cpu_count: u32,
     pub mem_used: u64,
     pub mem_total: u64,
-    pub disk_read: u64,          // bytes/s (cumulative from API)
+    pub disk_read: u64, // bytes/s (cumulative from API)
     pub disk_write: u64,
     pub net_in: u64,
     pub net_out: u64,
@@ -83,7 +83,7 @@ pub struct StorageStatus {
     pub avail: u64,
     pub active: bool,
     pub enabled: bool,
-    pub kind: String,            // "dir" | "zfspool" | "lvm" | "nfs" etc.
+    pub kind: String, // "dir" | "zfspool" | "lvm" | "nfs" etc.
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -208,10 +208,7 @@ impl ProxmoxClient {
         }
 
         let http = builder.build().context("Building HTTP client")?;
-        let auth_header = format!(
-            "PVEAPIToken={}={}",
-            cfg.api_token_id, cfg.api_token_secret
-        );
+        let auth_header = format!("PVEAPIToken={}={}", cfg.api_token_id, cfg.api_token_secret);
 
         Ok(Self {
             http,
@@ -236,7 +233,10 @@ impl ProxmoxClient {
             anyhow::bail!("API {} returned {}", url, resp.status());
         }
 
-        let body: ApiResponse<T> = resp.json().await.with_context(|| format!("Parsing {url}"))?;
+        let body: ApiResponse<T> = resp
+            .json()
+            .await
+            .with_context(|| format!("Parsing {url}"))?;
         Ok(body.data)
     }
 
@@ -273,7 +273,8 @@ impl ProxmoxClient {
             load_avg5: load.get(1).map(parse_load).unwrap_or(0.0),
             load_avg15: load.get(2).map(parse_load).unwrap_or(0.0),
             uptime: raw.uptime,
-            kernel_version: raw.uname
+            kernel_version: raw
+                .uname
                 .as_ref()
                 .and_then(|u| u.get("sysname"))
                 .and_then(|v| v.as_str())
@@ -289,7 +290,10 @@ impl ProxmoxClient {
         let mut guests = Vec::new();
 
         // KVM VMs
-        match self.get::<Vec<RawGuest>>(&format!("/nodes/{node}/qemu")).await {
+        match self
+            .get::<Vec<RawGuest>>(&format!("/nodes/{node}/qemu"))
+            .await
+        {
             Ok(vms) => {
                 for vm in vms {
                     guests.push(raw_to_guest(vm, GuestKind::Vm, node));
@@ -299,7 +303,10 @@ impl ProxmoxClient {
         }
 
         // LXC Containers
-        match self.get::<Vec<RawGuest>>(&format!("/nodes/{node}/lxc")).await {
+        match self
+            .get::<Vec<RawGuest>>(&format!("/nodes/{node}/lxc"))
+            .await
+        {
             Ok(lxcs) => {
                 for lxc in lxcs {
                     guests.push(raw_to_guest(lxc, GuestKind::Lxc, node));
@@ -350,22 +357,21 @@ impl ProxmoxClient {
         }
 
         let result: Result<NetworkInterfaces> = self
-            .get(&format!("/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces"))
+            .get(&format!(
+                "/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces"
+            ))
             .await;
 
         result.ok().and_then(|ni| {
-            ni.result
-                .iter()
-                .filter(|i| i.name != "lo")
-                .find_map(|i| {
-                    i.ip_addresses.as_ref()?.iter().find_map(|a| {
-                        if a.kind == "ipv4" {
-                            Some(a.ip.clone())
-                        } else {
-                            None
-                        }
-                    })
+            ni.result.iter().filter(|i| i.name != "lo").find_map(|i| {
+                i.ip_addresses.as_ref()?.iter().find_map(|a| {
+                    if a.kind == "ipv4" {
+                        Some(a.ip.clone())
+                    } else {
+                        None
+                    }
                 })
+            })
         })
     }
 
@@ -382,11 +388,22 @@ impl ProxmoxClient {
         self.vm_agent_exec_command(node, vmid, cmd.join(" ")).await
     }
 
-    pub async fn vm_agent_exec_shell(&self, node: &str, vmid: u32, command: &str) -> Result<String> {
-        self.vm_agent_exec_command(node, vmid, format!("/bin/sh -lc {}", shell_quote(command))).await
+    pub async fn vm_agent_exec_shell(
+        &self,
+        node: &str,
+        vmid: u32,
+        command: &str,
+    ) -> Result<String> {
+        self.vm_agent_exec_command(node, vmid, format!("/bin/sh -lc {}", shell_quote(command)))
+            .await
     }
 
-    async fn vm_agent_exec_command(&self, node: &str, vmid: u32, command: String) -> Result<String> {
+    async fn vm_agent_exec_command(
+        &self,
+        node: &str,
+        vmid: u32,
+        command: String,
+    ) -> Result<String> {
         #[derive(Serialize)]
         struct ExecReq {
             command: String,
@@ -457,17 +474,31 @@ impl ProxmoxClient {
     }
 
     /// List storage content rows for a content type such as "backup" or "iso".
-    pub async fn storage_content(&self, node: &str, storage: &str, content: &str) -> Result<Vec<serde_json::Value>> {
-        self.get(&format!("/nodes/{node}/storage/{storage}/content?content={content}")).await
+    pub async fn storage_content(
+        &self,
+        node: &str,
+        storage: &str,
+        content: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.get(&format!(
+            "/nodes/{node}/storage/{storage}/content?content={content}"
+        ))
+        .await
     }
 
     /// List snapshots using Proxmox API metadata. This is preferred over parsing qm/pct text output.
-    pub async fn guest_snapshots(&self, node: &str, kind: &GuestKind, vmid: u32) -> Result<Vec<serde_json::Value>> {
+    pub async fn guest_snapshots(
+        &self,
+        node: &str,
+        kind: &GuestKind,
+        vmid: u32,
+    ) -> Result<Vec<serde_json::Value>> {
         let guest_type = match kind {
             GuestKind::Vm => "qemu",
             GuestKind::Lxc => "lxc",
         };
-        self.get(&format!("/nodes/{node}/{guest_type}/{vmid}/snapshot")).await
+        self.get(&format!("/nodes/{node}/{guest_type}/{vmid}/snapshot"))
+            .await
     }
 
     // ── Cluster ───────────────────────────────────────────────────────────────
@@ -537,7 +568,10 @@ fn infer_guest_os(name: &str, tags: &[String]) -> (Option<String>, Option<String
         return (Some("CentOS".to_string()), version("centos"));
     }
     if haystack.contains("windows") || haystack.contains("win-") || haystack.starts_with("win") {
-        return (Some("Windows".to_string()), version("windows").or_else(|| version("win")));
+        return (
+            Some("Windows".to_string()),
+            version("windows").or_else(|| version("win")),
+        );
     }
     if haystack.contains("arch") {
         return (Some("Arch Linux".to_string()), None);
@@ -548,7 +582,8 @@ fn infer_guest_os(name: &str, tags: &[String]) -> (Option<String>, Option<String
 
 fn extract_version_after(text: &str, marker: &str) -> Option<String> {
     let start = text.find(marker)? + marker.len();
-    let rest = text[start..].trim_start_matches(|c: char| c == '-' || c == '_' || c.is_whitespace());
+    let rest =
+        text[start..].trim_start_matches(|c: char| c == '-' || c == '_' || c.is_whitespace());
     let version: String = rest
         .chars()
         .take_while(|c| c.is_ascii_digit() || *c == '.')

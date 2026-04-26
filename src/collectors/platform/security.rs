@@ -6,12 +6,21 @@ pub(super) async fn collect_security(
 ) -> Vec<SecurityCheck> {
     let mut checks = Vec::new();
 
-    let sshd = tokio::fs::read_to_string("/etc/ssh/sshd_config").await.unwrap_or_default();
-    let root_login = sshd.lines().rev().find_map(|line| {
-        let line = line.trim();
-        if line.starts_with('#') { return None; }
-        line.strip_prefix("PermitRootLogin").map(|v| v.trim().to_string())
-    }).unwrap_or_else(|| "default".to_string());
+    let sshd = tokio::fs::read_to_string("/etc/ssh/sshd_config")
+        .await
+        .unwrap_or_default();
+    let root_login = sshd
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let line = line.trim();
+            if line.starts_with('#') {
+                return None;
+            }
+            line.strip_prefix("PermitRootLogin")
+                .map(|v| v.trim().to_string())
+        })
+        .unwrap_or_else(|| "default".to_string());
     checks.push(security_check(
         "root_login",
         "Root SSH login",
@@ -21,13 +30,27 @@ pub(super) async fn collect_security(
     ));
 
     let pveversion = run_cmd("pveversion", &[]).await.unwrap_or_default();
-    checks.push(security_check("pve_version", "PVE version", "info", pveversion.trim(), "Informational posture check: installed Proxmox version"));
+    checks.push(security_check(
+        "pve_version",
+        "PVE version",
+        "info",
+        pveversion.trim(),
+        "Informational posture check: installed Proxmox version",
+    ));
 
     let repo_detail = read_repo_files().await;
     let repo_severity = repo_posture_severity(&repo_detail);
-    checks.push(security_check("repos", "Repository posture", repo_severity, &repo_detail, "Posture finding: repository choice may be intentional; review support/update policy"));
+    checks.push(security_check(
+        "repos",
+        "Repository posture",
+        repo_severity,
+        &repo_detail,
+        "Posture finding: repository choice may be intentional; review support/update policy",
+    ));
 
-    let fw = run_cmd("pve-firewall", &["status"]).await.unwrap_or_default();
+    let fw = run_cmd("pve-firewall", &["status"])
+        .await
+        .unwrap_or_default();
     checks.push(security_check(
         "firewall",
         "PVE firewall",
@@ -36,10 +59,7 @@ pub(super) async fn collect_security(
         "Posture finding: disabled firewall may be intentional on trusted networks; review exposure model",
     ));
 
-    let no_agent = guest_agents
-        .iter()
-        .filter(|g| g.status != "ok")
-        .count();
+    let no_agent = guest_agents.iter().filter(|g| g.status != "ok").count();
     checks.push(security_check(
         "guest_agent_visibility",
         "Guest visibility",
@@ -60,8 +80,13 @@ pub(super) async fn collect_security(
     checks
 }
 
-
-fn security_check(key: &str, label: &str, severity: &str, status: &str, detail: &str) -> SecurityCheck {
+fn security_check(
+    key: &str,
+    label: &str,
+    severity: &str,
+    status: &str,
+    detail: &str,
+) -> SecurityCheck {
     SecurityCheck {
         key: key.into(),
         label: label.into(),
@@ -73,7 +98,11 @@ fn security_check(key: &str, label: &str, severity: &str, status: &str, detail: 
 
 async fn read_repo_files() -> String {
     let mut text = String::new();
-    for path in ["/etc/apt/sources.list", "/etc/apt/sources.list.d/pve-enterprise.sources", "/etc/apt/sources.list.d/pve-no-subscription.sources"] {
+    for path in [
+        "/etc/apt/sources.list",
+        "/etc/apt/sources.list.d/pve-enterprise.sources",
+        "/etc/apt/sources.list.d/pve-no-subscription.sources",
+    ] {
         if let Ok(content) = tokio::fs::read_to_string(path).await {
             text.push_str(path);
             text.push('\n');
@@ -81,11 +110,17 @@ async fn read_repo_files() -> String {
             text.push('\n');
         }
     }
-    if text.is_empty() { "no apt repo files readable".into() } else { text.lines().take(20).collect::<Vec<_>>().join(" | ") }
+    if text.is_empty() {
+        "no apt repo files readable".into()
+    } else {
+        text.lines().take(20).collect::<Vec<_>>().join(" | ")
+    }
 }
 
 fn repo_posture_severity(repo_detail: &str) -> &'static str {
-    if repo_detail.contains("pve-enterprise") && !repo_detail.contains("download.proxmox.com/debian/pve") {
+    if repo_detail.contains("pve-enterprise")
+        && !repo_detail.contains("download.proxmox.com/debian/pve")
+    {
         "warning"
     } else {
         "ok"

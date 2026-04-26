@@ -10,7 +10,9 @@
 //   - Exported as Prometheus counters per severity/pattern
 
 use anyhow::Result;
-use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use regex::Regex;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -27,10 +29,10 @@ use crate::config::{AlertSeverity, LogAlertPattern, LogConfig};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogLine {
-    pub source: String,         // "lxc:101:/var/log/syslog"
-    pub path: String,           // actual host path
+    pub source: String, // "lxc:101:/var/log/syslog"
+    pub path: String,   // actual host path
     pub line: String,
-    pub timestamp_ms: i64,      // wall clock when we read it
+    pub timestamp_ms: i64, // wall clock when we read it
     pub pattern_match: Option<String>,
     pub severity: Option<AlertSeverity>,
 }
@@ -89,7 +91,11 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    pub fn new(cfg: LogConfig, alert_tx: AlertTx, ws_tx: Option<broadcast::Sender<String>>) -> Self {
+    pub fn new(
+        cfg: LogConfig,
+        alert_tx: AlertTx,
+        ws_tx: Option<broadcast::Sender<String>>,
+    ) -> Self {
         let patterns = compile_patterns(&cfg.alert_patterns);
         Self {
             cfg,
@@ -108,13 +114,13 @@ impl LogCollector {
     /// Register an LXC log file for watching.
     /// `vmid` = LXC id, `log_path` = path inside container (e.g. /var/log/syslog)
     pub async fn watch_lxc_log(&self, vmid: u32, log_path: &str) -> Result<()> {
-        let host_path = PathBuf::from(format!(
-            "/var/lib/lxc/{}/rootfs{}",
-            vmid, log_path
-        ));
+        let host_path = PathBuf::from(format!("/var/lib/lxc/{}/rootfs{}", vmid, log_path));
 
         if !host_path.exists() {
-            debug!("Log not found (LXC may not have it): {}", host_path.display());
+            debug!(
+                "Log not found (LXC may not have it): {}",
+                host_path.display()
+            );
             return Ok(());
         }
 
@@ -182,7 +188,10 @@ impl LogCollector {
 
             for event in rx {
                 match event {
-                    Ok(Event { kind: EventKind::Modify(_), .. }) => {
+                    Ok(Event {
+                        kind: EventKind::Modify(_),
+                        ..
+                    }) => {
                         // Read new bytes since last position
                         if let Ok(mut f) = std::fs::File::open(&host_path) {
                             use std::io::{Read, Seek, SeekFrom};
@@ -216,7 +225,10 @@ impl LogCollector {
                                             }
                                         }
                                         // Store in ring buffer
-                                        let sev_str = matched_sev.as_ref().map(|s| s.as_str()).unwrap_or("info");
+                                        let sev_str = matched_sev
+                                            .as_ref()
+                                            .map(|s| s.as_str())
+                                            .unwrap_or("info");
                                         let log_line = LogLine {
                                             source: source.clone(),
                                             path: path_str.clone(),
@@ -250,16 +262,17 @@ impl LogCollector {
                             }
                         }
                     }
-                    Ok(Event { kind: EventKind::Remove(_), .. }) => {
+                    Ok(Event {
+                        kind: EventKind::Remove(_),
+                        ..
+                    }) => {
                         // Log rotated away — re-watch when it reappears
                         info!("Log removed, will re-watch: {}", host_path.display());
                         // Simple: sleep and retry
                         std::thread::sleep(std::time::Duration::from_secs(5));
                         if host_path.exists() {
                             pos = 0;
-                            watcher
-                                .watch(&host_path, RecursiveMode::NonRecursive)
-                                .ok();
+                            watcher.watch(&host_path, RecursiveMode::NonRecursive).ok();
                         }
                     }
                     Err(e) => warn!("inotify error: {e}"),
@@ -332,8 +345,6 @@ impl LogCollector {
         alerts
     }
 }
-
-
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Commonly-watched Proxmox host logs

@@ -53,7 +53,7 @@ pub async fn run_analyzer(
             if *mem_pct >= cfg.critical_mem_pct {
                 // Node is under severe pressure
                 // Suggest migration to a node with > target_free_mem_pct
-                
+
                 // Find candidates
                 let mut suggest_vmid = None;
                 let mut target_node = None;
@@ -64,7 +64,11 @@ pub async fn run_analyzer(
                         if let Ok(guests) = client.list_guests(node).await {
                             // Find largest VM that fits in the target's free mem
                             // For simplicity, just grab the first running VM
-                            if let Some(guest) = guests.iter().find(|g| g.status == "running" && g.kind == crate::proxmox_api::GuestKind::Vm && g.mem_total < *free_bytes_target as u64) {
+                            if let Some(guest) = guests.iter().find(|g| {
+                                g.status == "running"
+                                    && g.kind == crate::proxmox_api::GuestKind::Vm
+                                    && g.mem_total < *free_bytes_target as u64
+                            }) {
                                 suggest_vmid = Some(guest.vmid);
                                 target_node = Some(target.clone());
                                 break;

@@ -2,14 +2,16 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex};
-use tokio::time::{interval, Duration};
+use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
 
-use crate::alert_rules::{normalize_service_name, service_state_map, AlertRuleEvaluator, ServiceRuleState};
+use crate::alert_rules::{
+    AlertRuleEvaluator, ServiceRuleState, normalize_service_name, service_state_map,
+};
 use crate::alerts::{self, Alert, AlertDispatcher};
 use crate::collectors::haproxy::HaproxyCollector;
-use crate::collectors::logs::{LogCollector, CONTAINER_LOGS, PROXMOX_HOST_LOGS};
+use crate::collectors::logs::{CONTAINER_LOGS, LogCollector, PROXMOX_HOST_LOGS};
 use crate::collectors::lxc::LxcCollector;
 use crate::collectors::vm::VmCollector;
 use crate::config::Config;
@@ -31,7 +33,13 @@ fn vm_service_state(active: bool, status: &str) -> &str {
 }
 
 fn is_public_bind_without_auth(cfg: &Config) -> bool {
-    let auth_empty = cfg.metrics.auth.as_deref().map(str::trim).unwrap_or("").is_empty();
+    let auth_empty = cfg
+        .metrics
+        .auth
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty();
     let public_bind = matches!(
         cfg.metrics.listen_addr.as_str(),
         "0.0.0.0" | "::" | "[::]" | ""
@@ -47,8 +55,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     if is_public_bind_without_auth(&cfg) {
         warn!(
             "WARNING: Sentinel is listening on {}:{} without dashboard auth. Do not expose this endpoint to untrusted networks.",
-            cfg.metrics.listen_addr,
-            cfg.metrics.listen_port
+            cfg.metrics.listen_addr, cfg.metrics.listen_port
         );
     }
 
@@ -104,7 +111,9 @@ pub async fn run(cfg: Config) -> Result<()> {
         while let Some(log_alert) = alert_rx.recv().await {
             let lower_line = log_alert.line.to_lowercase();
             if lower_line.contains("out of memory: killed process") {
-                let process = log_alert.line.split("process")
+                let process = log_alert
+                    .line
+                    .split("process")
                     .nth(1)
                     .unwrap_or("")
                     .split_whitespace()
@@ -112,11 +121,14 @@ pub async fn run(cfg: Config) -> Result<()> {
                     .unwrap_or("unknown")
                     .to_string();
                 crate::exporter::prometheus::inc_oom_killer(&log_alert.source);
-                dispatcher.dispatch(Alert::OomKilled { node: log_alert.source.clone(), process }).await;
-            } else {
                 dispatcher
-                    .dispatch(Alert::LogPattern(log_alert))
+                    .dispatch(Alert::OomKilled {
+                        node: log_alert.source.clone(),
+                        process,
+                    })
                     .await;
+            } else {
+                dispatcher.dispatch(Alert::LogPattern(log_alert)).await;
             }
         }
     });
@@ -188,7 +200,8 @@ pub async fn run(cfg: Config) -> Result<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(api_secs));
             let mut dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
-            let mut vm_last_node: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+            let mut vm_last_node: std::collections::HashMap<u32, String> =
+                std::collections::HashMap::new();
 
             loop {
                 ticker.tick().await;
@@ -204,8 +217,14 @@ pub async fn run(cfg: Config) -> Result<()> {
                             prom::update_node(&status);
 
                             if let Err(e) = storage.insert_node_metric(
-                                &status.node, status.cpu_usage, status.mem_used, status.mem_total,
-                                status.swap_used, status.swap_total, status.disk_used, status.disk_total,
+                                &status.node,
+                                status.cpu_usage,
+                                status.mem_used,
+                                status.mem_total,
+                                status.swap_used,
+                                status.swap_total,
+                                status.disk_used,
+                                status.disk_total,
                                 status.load_avg1,
                             ) {
                                 warn!("SQLite node metric error: {}", e);
@@ -244,8 +263,17 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 prom::update_guest(guest);
 
                                 if let Err(e) = storage.insert_guest_metric(
-                                    guest.vmid, &guest.name, match guest.kind { GuestKind::Vm => "qemu", GuestKind::Lxc => "lxc" },
-                                    &guest.status, guest.cpu_usage, guest.mem_used, guest.mem_total, node
+                                    guest.vmid,
+                                    &guest.name,
+                                    match guest.kind {
+                                        GuestKind::Vm => "qemu",
+                                        GuestKind::Lxc => "lxc",
+                                    },
+                                    &guest.status,
+                                    guest.cpu_usage,
+                                    guest.mem_used,
+                                    guest.mem_total,
+                                    node,
                                 ) {
                                     warn!("SQLite guest metric error: {}", e);
                                 }
@@ -279,21 +307,26 @@ pub async fn run(cfg: Config) -> Result<()> {
 
                                 if let Some(old) = vm_last_node.get(&guest.vmid) {
                                     if old != &guest.node {
-                                        dispatcher.dispatch(Alert::MigrationDetected {
-                                            vmid: guest.vmid,
-                                            name: guest.name.clone(),
-                                            from_node: old.clone(),
-                                            to_node: guest.node.clone(),
-                                        }).await;
-                                        
-                                        let _ = ws_tx.send(json!({
-                                            "type": "vm_migrated",
-                                            "vmid": guest.vmid,
-                                            "name": guest.name,
-                                            "from": old,
-                                            "to": guest.node,
-                                            "timestamp": chrono::Utc::now().to_rfc3339()
-                                        }).to_string());
+                                        dispatcher
+                                            .dispatch(Alert::MigrationDetected {
+                                                vmid: guest.vmid,
+                                                name: guest.name.clone(),
+                                                from_node: old.clone(),
+                                                to_node: guest.node.clone(),
+                                            })
+                                            .await;
+
+                                        let _ = ws_tx.send(
+                                            json!({
+                                                "type": "vm_migrated",
+                                                "vmid": guest.vmid,
+                                                "name": guest.name,
+                                                "from": old,
+                                                "to": guest.node,
+                                                "timestamp": chrono::Utc::now().to_rfc3339()
+                                            })
+                                            .to_string(),
+                                        );
                                     }
                                 }
                                 vm_last_node.insert(guest.vmid, guest.node.clone());
@@ -365,8 +398,12 @@ pub async fn run(cfg: Config) -> Result<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(cgroup_secs));
             let mut watched_lxcs: std::collections::HashSet<u32> = std::collections::HashSet::new();
-            let mut discovered_lxc_services: std::collections::HashMap<u32, std::collections::HashSet<String>> = std::collections::HashMap::new();
-            let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
+            let mut discovered_lxc_services: std::collections::HashMap<
+                u32,
+                std::collections::HashSet<String>,
+            > = std::collections::HashMap::new();
+            let mut dispatcher =
+                AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
 
             loop {
                 ticker.tick().await;
@@ -386,11 +423,15 @@ pub async fn run(cfg: Config) -> Result<()> {
                         let stats = LxcCollector::collect(guest.vmid, &guest.name).await;
                         prom::update_lxc_detail(&stats);
 
-                        let tracked_services = cfg_inner.services.lxc.iter().find(|l| l.vmid == guest.vmid);
+                        let tracked_services =
+                            cfg_inner.services.lxc.iter().find(|l| l.vmid == guest.vmid);
 
-                        let service_states = service_state_map(stats.services.iter().map(|s| {
-                            ServiceRuleState::new(&s.name, &s.state, &s.sub_state)
-                        }));
+                        let service_states = service_state_map(
+                            stats
+                                .services
+                                .iter()
+                                .map(|s| ServiceRuleState::new(&s.name, &s.state, &s.sub_state)),
+                        );
 
                         let active_services: std::collections::HashSet<String> = service_states
                             .iter()
@@ -405,12 +446,15 @@ pub async fn run(cfg: Config) -> Result<()> {
                             tracked_services
                                 .map(|tracked| {
                                     let short = normalize_service_name(name);
-                                    tracked.checks.contains(&name.to_string()) || tracked.checks.contains(&short)
+                                    tracked.checks.contains(&name.to_string())
+                                        || tracked.checks.contains(&short)
                                 })
                                 .unwrap_or(false)
                         };
 
-                        let svcs: Vec<serde_json::Value> = stats.services.iter()
+                        let svcs: Vec<serde_json::Value> = stats
+                            .services
+                            .iter()
                             .filter(|s| should_show_service(&s.name))
                             .map(|s| {
                                 let is_active = service_is_healthy(&s.state, &s.sub_state);
@@ -422,7 +466,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 })
                             })
                             .collect();
-                        
+
                         // LXC collection runs from the host. Even an empty service
                         // list is enough signal to evaluate explicitly configured
                         // "missing" service checks and custom rules.
@@ -430,11 +474,13 @@ pub async fn run(cfg: Config) -> Result<()> {
                             for service in &tracked.checks {
                                 let name = normalize_service_name(service);
                                 if !active_services.contains(&name) {
-                                    dispatcher.dispatch(Alert::ServiceUnavailable {
-                                        vmid: guest.vmid,
-                                        node: guest.node.clone(),
-                                        service: name,
-                                    }).await;
+                                    dispatcher
+                                        .dispatch(Alert::ServiceUnavailable {
+                                            vmid: guest.vmid,
+                                            node: guest.node.clone(),
+                                            service: name,
+                                        })
+                                        .await;
                                 }
                             }
                         }
@@ -444,16 +490,16 @@ pub async fn run(cfg: Config) -> Result<()> {
                             if baseline.is_empty() {
                                 baseline.extend(active_services.iter().cloned());
                             } else {
-                                let missing: Vec<String> = baseline
-                                    .difference(&active_services)
-                                    .cloned()
-                                    .collect();
+                                let missing: Vec<String> =
+                                    baseline.difference(&active_services).cloned().collect();
                                 for service in missing {
-                                    dispatcher.dispatch(Alert::ServiceUnavailable {
-                                        vmid: guest.vmid,
-                                        node: guest.node.clone(),
-                                        service,
-                                    }).await;
+                                    dispatcher
+                                        .dispatch(Alert::ServiceUnavailable {
+                                            vmid: guest.vmid,
+                                            node: guest.node.clone(),
+                                            service,
+                                        })
+                                        .await;
                                 }
                                 baseline.extend(active_services.iter().cloned());
                             }
@@ -473,14 +519,18 @@ pub async fn run(cfg: Config) -> Result<()> {
                         }
 
                         // Build disk mounts JSON
-                        let disks: Vec<serde_json::Value> = stats.disk_mounts.iter().map(|d| {
-                            json!({
-                                "mountpoint": d.mountpoint,
-                                "total": d.total,
-                                "used": d.used,
-                                "use_pct": d.use_pct
+                        let disks: Vec<serde_json::Value> = stats
+                            .disk_mounts
+                            .iter()
+                            .map(|d| {
+                                json!({
+                                    "mountpoint": d.mountpoint,
+                                    "total": d.total,
+                                    "used": d.used,
+                                    "use_pct": d.use_pct
+                                })
                             })
-                        }).collect();
+                            .collect();
 
                         lxc_details.push(json!({
                             "vmid": guest.vmid,
@@ -510,16 +560,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                         if !watched_lxcs.contains(&guest.vmid) {
                             info!("Registering log watchers for LXC {}", guest.vmid);
                             for log_path in CONTAINER_LOGS {
-                                log_collector
-                                    .watch_lxc_log(guest.vmid, log_path)
-                                    .await
-                                    .ok();
+                                log_collector.watch_lxc_log(guest.vmid, log_path).await.ok();
                             }
                             for log_path in &cfg_inner.logs.watch_paths {
-                                log_collector
-                                    .watch_lxc_log(guest.vmid, log_path)
-                                    .await
-                                    .ok();
+                                log_collector.watch_lxc_log(guest.vmid, log_path).await.ok();
                             }
                             watched_lxcs.insert(guest.vmid);
                         }
@@ -548,9 +592,14 @@ pub async fn run(cfg: Config) -> Result<()> {
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(vm_secs));
-            let mut conn_failures: std::collections::HashMap<u32, u8> = std::collections::HashMap::new();
-            let mut discovered_vm_services: std::collections::HashMap<u32, std::collections::HashSet<String>> = std::collections::HashMap::new();
-            let mut dispatcher = AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
+            let mut conn_failures: std::collections::HashMap<u32, u8> =
+                std::collections::HashMap::new();
+            let mut discovered_vm_services: std::collections::HashMap<
+                u32,
+                std::collections::HashSet<String>,
+            > = std::collections::HashMap::new();
+            let mut dispatcher =
+                AlertDispatcher::new(cfg_inner.alerts.clone(), Some(storage.clone()));
 
             loop {
                 ticker.tick().await;
@@ -571,19 +620,19 @@ pub async fn run(cfg: Config) -> Result<()> {
                         if cfg_inner.ssh.skip_vmids.contains(&guest.vmid) {
                             continue;
                         }
-                        let vm_stats = vm_collector
-                            .collect(node, guest.vmid, &guest.name)
-                            .await;
+                        let vm_stats = vm_collector.collect(node, guest.vmid, &guest.name).await;
 
                         if !vm_stats.agent_available && !vm_stats.ssh_available {
                             let count = conn_failures.entry(guest.vmid).or_insert(0);
                             *count += 1;
                             if *count >= 5 {
-                                dispatcher.dispatch(Alert::VmConnectionLost { 
-                                    vmid: guest.vmid, 
-                                    name: guest.name.clone(), 
-                                    node: node.clone() 
-                                }).await;
+                                dispatcher
+                                    .dispatch(Alert::VmConnectionLost {
+                                        vmid: guest.vmid,
+                                        name: guest.name.clone(),
+                                        node: node.clone(),
+                                    })
+                                    .await;
                             }
                         } else {
                             conn_failures.insert(guest.vmid, 0);
@@ -603,49 +652,62 @@ pub async fn run(cfg: Config) -> Result<()> {
                             .map(|(name, _)| name.clone())
                             .collect();
 
-                        let svcs: Vec<serde_json::Value> = vm_stats.services.iter().map(|s| {
-                            let state = vm_service_state(s.active, &s.status);
-                            json!({
-                                "name": normalize_service_name(&s.name),
-                                "status": if s.active { "running" } else { state },
-                                "state": state,
-                                "sub_state": s.status.as_str()
+                        let svcs: Vec<serde_json::Value> = vm_stats
+                            .services
+                            .iter()
+                            .map(|s| {
+                                let state = vm_service_state(s.active, &s.status);
+                                json!({
+                                    "name": normalize_service_name(&s.name),
+                                    "status": if s.active { "running" } else { state },
+                                    "state": state,
+                                    "sub_state": s.status.as_str()
+                                })
                             })
-                        }).collect();
+                            .collect();
 
-                        let has_guest_visibility = vm_stats.agent_available || vm_stats.ssh_available;
+                        let has_guest_visibility =
+                            vm_stats.agent_available || vm_stats.ssh_available;
                         if has_guest_visibility {
                             if let Some(tracked) = cfg_inner.services.vm.iter().find(|v| {
                                 v.vmid == Some(guest.vmid)
-                                    || vm_stats.ip_address.as_ref().is_some_and(|ip| v.ip.as_ref() == Some(ip))
+                                    || vm_stats
+                                        .ip_address
+                                        .as_ref()
+                                        .is_some_and(|ip| v.ip.as_ref() == Some(ip))
                             }) {
-                                    for service in &tracked.checks {
-                                        let name = normalize_service_name(service);
-                                        if !active_services.contains(&name) {
-                                            dispatcher.dispatch(Alert::ServiceUnavailable {
+                                for service in &tracked.checks {
+                                    let name = normalize_service_name(service);
+                                    if !active_services.contains(&name) {
+                                        dispatcher
+                                            .dispatch(Alert::ServiceUnavailable {
                                                 vmid: guest.vmid,
                                                 node: node.clone(),
                                                 service: name,
-                                            }).await;
-                                        }
+                                            })
+                                            .await;
                                     }
+                                }
                             }
 
-                            if cfg_inner.services.alert_on_discovered && !vm_stats.services.is_empty() {
-                                let baseline = discovered_vm_services.entry(guest.vmid).or_default();
+                            if cfg_inner.services.alert_on_discovered
+                                && !vm_stats.services.is_empty()
+                            {
+                                let baseline =
+                                    discovered_vm_services.entry(guest.vmid).or_default();
                                 if baseline.is_empty() {
                                     baseline.extend(active_services.iter().cloned());
                                 } else {
-                                    let missing: Vec<String> = baseline
-                                        .difference(&active_services)
-                                        .cloned()
-                                        .collect();
+                                    let missing: Vec<String> =
+                                        baseline.difference(&active_services).cloned().collect();
                                     for service in missing {
-                                        dispatcher.dispatch(Alert::ServiceUnavailable {
-                                            vmid: guest.vmid,
-                                            node: node.clone(),
-                                            service,
-                                        }).await;
+                                        dispatcher
+                                            .dispatch(Alert::ServiceUnavailable {
+                                                vmid: guest.vmid,
+                                                node: node.clone(),
+                                                service,
+                                            })
+                                            .await;
                                     }
                                     baseline.extend(active_services.iter().cloned());
                                 }
@@ -664,14 +726,18 @@ pub async fn run(cfg: Config) -> Result<()> {
                             }
                         }
 
-                        let disks: Vec<serde_json::Value> = vm_stats.disk_mounts.iter().map(|d| {
-                            json!({
-                                "mountpoint": d.mountpoint,
-                                "total": d.total,
-                                "used": d.used,
-                                "use_pct": d.use_pct
+                        let disks: Vec<serde_json::Value> = vm_stats
+                            .disk_mounts
+                            .iter()
+                            .map(|d| {
+                                json!({
+                                    "mountpoint": d.mountpoint,
+                                    "total": d.total,
+                                    "used": d.used,
+                                    "use_pct": d.use_pct
+                                })
                             })
-                        }).collect();
+                            .collect();
 
                         vm_details.push(json!({
                             "vmid": guest.vmid,
@@ -735,8 +801,13 @@ pub async fn run(cfg: Config) -> Result<()> {
                                     for p in &stats.proxies {
                                         for s in &p.servers {
                                             if let Err(e) = storage.insert_haproxy_metric(
-                                                &p.name, &s.server_name, &s.status,
-                                                s.sessions_current, s.bytes_in, s.bytes_out, s.http_5xx,
+                                                &p.name,
+                                                &s.server_name,
+                                                &s.status,
+                                                s.sessions_current,
+                                                s.bytes_in,
+                                                s.bytes_out,
+                                                s.http_5xx,
                                             ) {
                                                 warn!("SQLite haproxy error: {}", e);
                                             }
@@ -813,29 +884,45 @@ pub async fn run(cfg: Config) -> Result<()> {
     for pg_cfg in &cfg.postgres {
         if pg_cfg.enabled {
             let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
-            tokio::spawn(crate::collectors::postgres::run_collector(pg_cfg.clone(), dispatcher));
+            tokio::spawn(crate::collectors::postgres::run_collector(
+                pg_cfg.clone(),
+                dispatcher,
+            ));
         }
     }
     for redis_cfg in &cfg.redis {
         if redis_cfg.enabled {
             let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
-            tokio::spawn(crate::collectors::redis::run_collector(redis_cfg.clone(), dispatcher));
+            tokio::spawn(crate::collectors::redis::run_collector(
+                redis_cfg.clone(),
+                dispatcher,
+            ));
         }
     }
     for os_cfg in &cfg.object_storage {
         if os_cfg.enabled {
             let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
-            tokio::spawn(crate::collectors::object_storage::run_collector(os_cfg.clone(), dispatcher));
+            tokio::spawn(crate::collectors::object_storage::run_collector(
+                os_cfg.clone(),
+                dispatcher,
+            ));
         }
     }
     if cfg.file_activity.enabled {
-        tokio::spawn(crate::collectors::file_activity::run_collector(cfg.file_activity.clone(), ws_tx.clone()));
+        tokio::spawn(crate::collectors::file_activity::run_collector(
+            cfg.file_activity.clone(),
+            ws_tx.clone(),
+        ));
     }
-    
+
     // ── Task 6: Node Pressure Analyzer ────────────────────────────────────
     if cfg.intelligence.enabled {
         let dispatcher = AlertDispatcher::new(cfg.alerts.clone(), Some(storage.clone()));
-        tokio::spawn(crate::intelligence::run_analyzer(cfg.intelligence.clone(), client.clone(), dispatcher));
+        tokio::spawn(crate::intelligence::run_analyzer(
+            cfg.intelligence.clone(),
+            client.clone(),
+            dispatcher,
+        ));
     }
 
     // ── Task 7: Application Metrics ───────────────────────────────────────
@@ -845,7 +932,10 @@ pub async fn run(cfg: Config) -> Result<()> {
         let storage_clone = storage.clone();
         let cfg_clone = app_cfg.clone();
         tokio::spawn(crate::collectors::app_metrics::run_collector(
-            cfg_clone, storage_clone, dispatcher, ws_tx_clone
+            cfg_clone,
+            storage_clone,
+            dispatcher,
+            ws_tx_clone,
         ));
     }
 
@@ -856,7 +946,10 @@ pub async fn run(cfg: Config) -> Result<()> {
         let full_cfg_clone = cfg.clone();
         let cfg_clone = log_cfg.clone();
         tokio::spawn(crate::collectors::app_logs::run_collector(
-            cfg_clone, full_cfg_clone, dispatcher, ws_tx_clone
+            cfg_clone,
+            full_cfg_clone,
+            dispatcher,
+            ws_tx_clone,
         ));
     }
 

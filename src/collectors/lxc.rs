@@ -39,18 +39,18 @@ pub struct LxcDetailedStats {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct CgroupStats {
     // CPU
-    pub cpu_usage_usec: u64,   // cumulative microseconds used
+    pub cpu_usage_usec: u64, // cumulative microseconds used
     pub cpu_user_usec: u64,
     pub cpu_system_usec: u64,
     pub cpu_nr_periods: u64,
     pub cpu_nr_throttled: u64,
     // Memory
-    pub mem_current: u64,      // bytes currently used
+    pub mem_current: u64, // bytes currently used
     pub mem_peak: u64,
-    pub mem_limit: u64,        // 0 = unlimited
+    pub mem_limit: u64, // 0 = unlimited
     pub mem_swap_current: u64,
-    pub mem_anon: u64,         // anonymous (heap/stack) pages
-    pub mem_file: u64,         // file-backed pages (page cache)
+    pub mem_anon: u64, // anonymous (heap/stack) pages
+    pub mem_file: u64, // file-backed pages (page cache)
     // I/O (blkio)
     pub io_read_bytes: u64,
     pub io_write_bytes: u64,
@@ -75,8 +75,8 @@ pub struct NetIfaceStats {
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceStatus {
     pub name: String,
-    pub state: String,        // "active", "inactive", "failed", "activating"
-    pub sub_state: String,    // "running", "dead", "exited"
+    pub state: String,     // "active", "inactive", "failed", "activating"
+    pub sub_state: String, // "running", "dead", "exited"
     pub enabled: bool,
 }
 
@@ -153,11 +153,21 @@ impl LxcCollector {
             for line in content.lines() {
                 let mut parts = line.splitn(2, ' ');
                 match (parts.next(), parts.next()) {
-                    (Some("usage_usec"), Some(v)) => stats.cpu_usage_usec = v.trim().parse().unwrap_or(0),
-                    (Some("user_usec"), Some(v)) => stats.cpu_user_usec = v.trim().parse().unwrap_or(0),
-                    (Some("system_usec"), Some(v)) => stats.cpu_system_usec = v.trim().parse().unwrap_or(0),
-                    (Some("nr_periods"), Some(v)) => stats.cpu_nr_periods = v.trim().parse().unwrap_or(0),
-                    (Some("nr_throttled"), Some(v)) => stats.cpu_nr_throttled = v.trim().parse().unwrap_or(0),
+                    (Some("usage_usec"), Some(v)) => {
+                        stats.cpu_usage_usec = v.trim().parse().unwrap_or(0)
+                    }
+                    (Some("user_usec"), Some(v)) => {
+                        stats.cpu_user_usec = v.trim().parse().unwrap_or(0)
+                    }
+                    (Some("system_usec"), Some(v)) => {
+                        stats.cpu_system_usec = v.trim().parse().unwrap_or(0)
+                    }
+                    (Some("nr_periods"), Some(v)) => {
+                        stats.cpu_nr_periods = v.trim().parse().unwrap_or(0)
+                    }
+                    (Some("nr_throttled"), Some(v)) => {
+                        stats.cpu_nr_throttled = v.trim().parse().unwrap_or(0)
+                    }
                     _ => {}
                 }
             }
@@ -172,7 +182,9 @@ impl LxcCollector {
             .ok()
             .and_then(|s| s.trim().parse::<u64>().ok())
             .unwrap_or(0);
-        stats.mem_swap_current = read_u64(base.join("memory.swap.current")).await.unwrap_or(0);
+        stats.mem_swap_current = read_u64(base.join("memory.swap.current"))
+            .await
+            .unwrap_or(0);
 
         // memory.stat for anon/file breakdown
         if let Ok(content) = read_file(base.join("memory.stat")).await {
@@ -417,16 +429,16 @@ impl LxcCollector {
             }
             let fstype = parts[1];
             // Skip pseudo filesystems
-            if matches!(fstype, "tmpfs" | "devtmpfs" | "proc" | "sysfs" | "devpts" | "cgroup2") {
+            if matches!(
+                fstype,
+                "tmpfs" | "devtmpfs" | "proc" | "sysfs" | "devpts" | "cgroup2"
+            ) {
                 continue;
             }
             let total: u64 = parts[2].parse().unwrap_or(0);
             let used: u64 = parts[3].parse().unwrap_or(0);
             let avail: u64 = parts[4].parse().unwrap_or(0);
-            let use_pct: f64 = parts[5]
-                .trim_end_matches('%')
-                .parse::<f64>()
-                .unwrap_or(0.0);
+            let use_pct: f64 = parts[5].trim_end_matches('%').parse::<f64>().unwrap_or(0.0);
 
             mounts.push(DiskMount {
                 device: parts[0].to_string(),
@@ -448,10 +460,16 @@ impl LxcCollector {
         // Or use nsenter to read the container's process list
         let out = Command::new("nsenter")
             .args([
-                "-t", &init_pid.to_string(),
-                "-m", "-p",  // mount and pid namespaces
+                "-t",
+                &init_pid.to_string(),
+                "-m",
+                "-p", // mount and pid namespaces
                 "--",
-                "ps", "-eo", "pid,comm,pcpu,rss,state", "--no-headers", "--sort=-pcpu",
+                "ps",
+                "-eo",
+                "pid,comm,pcpu,rss,state",
+                "--no-headers",
+                "--sort=-pcpu",
             ])
             .output()
             .await?;

@@ -38,10 +38,12 @@ impl Storage {
              PRAGMA synchronous = NORMAL;
              PRAGMA cache_size = -8000;
              PRAGMA temp_store = MEMORY;
-             PRAGMA busy_timeout = 5000;"
+             PRAGMA busy_timeout = 5000;",
         )?;
 
-        let storage = Self { conn: Mutex::new(conn) };
+        let storage = Self {
+            conn: Mutex::new(conn),
+        };
         storage.create_tables()?;
         info!("Storage opened: {}", db_path.display());
         Ok(storage)
@@ -133,8 +135,9 @@ impl Storage {
             );
             CREATE INDEX IF NOT EXISTS idx_app_metrics_ts ON app_metrics(ts);
             CREATE INDEX IF NOT EXISTS idx_app_metrics_app ON app_metrics(app_name);
-            "
-        ).context("Creating database tables")?;
+            ",
+        )
+        .context("Creating database tables")?;
         Ok(())
     }
 
@@ -186,7 +189,16 @@ impl Storage {
         conn.execute(
             "INSERT INTO guest_metrics (vmid, name, kind, status, cpu, mem_used, mem_total, node)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![vmid, name, kind, status, cpu, sqlite_i64(mem_used), sqlite_i64(mem_total), node],
+            params![
+                vmid,
+                name,
+                kind,
+                status,
+                cpu,
+                sqlite_i64(mem_used),
+                sqlite_i64(mem_total),
+                node
+            ],
         )?;
         Ok(())
     }
@@ -249,11 +261,7 @@ impl Storage {
     // ── Query functions ──────────────────────────────────────────────────────
 
     /// Get node metrics for the last N hours
-    pub fn query_node_history(
-        &self,
-        node: &str,
-        hours: u32,
-    ) -> Result<Vec<serde_json::Value>> {
+    pub fn query_node_history(&self, node: &str, hours: u32) -> Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT ts, cpu, mem_used, mem_total, swap_used, swap_total, disk_used, disk_total, load_avg1
@@ -292,7 +300,7 @@ impl Storage {
             "SELECT ts, alert_key, severity, summary, resolved
              FROM alert_history
              ORDER BY ts DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![limit], |row| {
@@ -323,7 +331,7 @@ impl Storage {
             "SELECT ts, value FROM app_metrics
              WHERE app_name = ?1 AND metric = ?2
                AND ts > datetime('now', '-' || ?3 || ' minutes')
-             ORDER BY ts ASC"
+             ORDER BY ts ASC",
         )?;
 
         let rows = stmt.query_map(params![app_name, metric, minutes], |row| {
@@ -404,8 +412,11 @@ impl std::fmt::Display for CleanupStats {
         write!(
             f,
             "Cleaned up: {} node, {} guest, {} haproxy metrics, {} logs, {} alerts",
-            self.node_metrics, self.guest_metrics, self.haproxy_metrics,
-            self.log_lines, self.alerts
+            self.node_metrics,
+            self.guest_metrics,
+            self.haproxy_metrics,
+            self.log_lines,
+            self.alerts
         )
     }
 }

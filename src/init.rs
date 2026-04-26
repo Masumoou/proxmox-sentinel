@@ -6,13 +6,18 @@ pub fn run_init(config_path: &Path, force: bool) -> Result<()> {
     let api_url = prompt("Proxmox API URL", "https://127.0.0.1:8006")?;
     let token_id = prompt("API token ID", "sentinel@pve!monitoring")?;
     let token_secret = prompt_secret("API token secret")?;
-    let listen_port = prompt("Listen port", "9101")?.parse::<u16>().context("listen port must be a number")?;
+    let listen_port = prompt("Listen port", "9101")?
+        .parse::<u16>()
+        .context("listen port must be a number")?;
     let verify_tls = prompt_bool("Verify TLS certificates?", false)?;
     let dashboard_auth = prompt_bool("Enable dashboard auth?", false)?;
     let prometheus = prompt_bool("Enable Prometheus endpoint?", true)?;
 
     if config_path.exists() && !force {
-        anyhow::bail!("{} already exists. Re-run with --force to overwrite.", config_path.display());
+        anyhow::bail!(
+            "{} already exists. Re-run with --force to overwrite.",
+            config_path.display()
+        );
     }
 
     let auth_line = if dashboard_auth {
@@ -138,9 +143,11 @@ critical_days = 7
     );
 
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
-    std::fs::write(config_path, cfg).with_context(|| format!("writing {}", config_path.display()))?;
+    std::fs::write(config_path, cfg)
+        .with_context(|| format!("writing {}", config_path.display()))?;
 
     let service_path = Path::new("/etc/systemd/system/proxmox-sentinel.service");
     if service_path.exists() && !force {
@@ -165,7 +172,8 @@ WantedBy=multi-user.target
 "#,
             config_path.display()
         );
-        std::fs::write(service_path, service).with_context(|| format!("writing {}", service_path.display()))?;
+        std::fs::write(service_path, service)
+            .with_context(|| format!("writing {}", service_path.display()))?;
     }
 
     println!("Wrote {}", config_path.display());

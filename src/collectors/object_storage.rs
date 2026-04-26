@@ -14,7 +14,10 @@ pub async fn run_collector(cfg: ObjectStorageConfig, mut dispatcher: AlertDispat
         return;
     }
 
-    info!("Starting Object Storage health collector for {}", cfg.endpoint);
+    info!(
+        "Starting Object Storage health collector for {}",
+        cfg.endpoint
+    );
     let mut ticker = interval(Duration::from_secs(cfg.interval_secs));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -35,7 +38,7 @@ pub async fn run_collector(cfg: ObjectStorageConfig, mut dispatcher: AlertDispat
             Ok(res) => {
                 let status = res.status();
                 let duration = start.elapsed().as_secs_f64() * 1000.0;
-                
+
                 if status.is_server_error() {
                     crate::exporter::prometheus::update_object_storage(&cfg.name, false, duration);
                     dispatcher

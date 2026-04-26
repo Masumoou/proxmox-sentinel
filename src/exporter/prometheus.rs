@@ -4,28 +4,30 @@
 // Also exposes a JSON API at GET /api/status for dashboards.
 
 use axum::{
-    extract::{State, ws::{WebSocket, WebSocketUpgrade, Message}, Request},
-    http::{header, StatusCode, Method, HeaderValue},
+    Json, Router,
+    extract::{
+        Request, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Router, Json,
 };
-use serde::Deserialize;
 use base64::prelude::*;
-use rust_embed::RustEmbed;
 use mime_guess::from_path;
-use prometheus::{
-    register_gauge_vec, register_counter_vec,
-    GaugeVec, CounterVec, TextEncoder, Encoder,
-};
-use subtle::ConstantTimeEq;
 use once_cell::sync::Lazy;
+use prometheus::{
+    CounterVec, Encoder, GaugeVec, TextEncoder, register_counter_vec, register_gauge_vec,
+};
+use rust_embed::RustEmbed;
+use serde::Deserialize;
+use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 use tracing::info;
 
-use crate::proxmox_api::{GuestKind, GuestStatus, NodeStatus, StorageStatus};
 use crate::collectors::lxc::LxcDetailedStats;
+use crate::proxmox_api::{GuestKind, GuestStatus, NodeStatus, StorageStatus};
 
 #[derive(RustEmbed)]
 #[folder = "frontend/build/"]
@@ -40,7 +42,8 @@ static NODE_CPU_USAGE: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_cpu_usage_ratio",
         "CPU usage ratio (0.0-1.0) of a Proxmox node",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_MEM_USED: Lazy<GaugeVec> = Lazy::new(|| {
@@ -48,7 +51,8 @@ static NODE_MEM_USED: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_memory_used_bytes",
         "Memory used in bytes on a Proxmox node",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_MEM_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
@@ -56,7 +60,8 @@ static NODE_MEM_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_memory_total_bytes",
         "Total memory in bytes on a Proxmox node",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_DISK_USED: Lazy<GaugeVec> = Lazy::new(|| {
@@ -64,7 +69,8 @@ static NODE_DISK_USED: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_rootfs_used_bytes",
         "Root filesystem used bytes on a Proxmox node",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_DISK_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
@@ -72,7 +78,8 @@ static NODE_DISK_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_rootfs_total_bytes",
         "Root filesystem total bytes on a Proxmox node",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_LOAD_AVG: Lazy<GaugeVec> = Lazy::new(|| {
@@ -80,15 +87,12 @@ static NODE_LOAD_AVG: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_load_average",
         "Load average on a Proxmox node",
         &["node", "interval"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_UPTIME: Lazy<GaugeVec> = Lazy::new(|| {
-    register_gauge_vec!(
-        "pve_node_uptime_seconds",
-        "Uptime in seconds",
-        &["node"]
-    ).unwrap()
+    register_gauge_vec!("pve_node_uptime_seconds", "Uptime in seconds", &["node"]).unwrap()
 });
 
 // Guest (VM/LXC) metrics
@@ -97,7 +101,8 @@ static GUEST_CPU: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_cpu_usage_ratio",
         "CPU usage ratio for a VM or LXC",
         &["vmid", "name", "node", "type", "status"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_MEM_USED: Lazy<GaugeVec> = Lazy::new(|| {
@@ -105,7 +110,8 @@ static GUEST_MEM_USED: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_memory_used_bytes",
         "Memory used by a VM or LXC",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_MEM_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
@@ -113,7 +119,8 @@ static GUEST_MEM_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_memory_total_bytes",
         "Memory configured for a VM or LXC",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_NET_IN: Lazy<GaugeVec> = Lazy::new(|| {
@@ -121,7 +128,8 @@ static GUEST_NET_IN: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_network_in_bytes_total",
         "Total bytes received by a VM or LXC",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_NET_OUT: Lazy<GaugeVec> = Lazy::new(|| {
@@ -129,7 +137,8 @@ static GUEST_NET_OUT: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_network_out_bytes_total",
         "Total bytes sent by a VM or LXC",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_DISK_READ: Lazy<GaugeVec> = Lazy::new(|| {
@@ -137,7 +146,8 @@ static GUEST_DISK_READ: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_disk_read_bytes_total",
         "Cumulative disk read bytes",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static OOM_KILL_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
@@ -145,7 +155,8 @@ static OOM_KILL_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
         "pve_oom_kill_total",
         "Total number of OOM Killer events detected",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_DISK_WRITE: Lazy<GaugeVec> = Lazy::new(|| {
@@ -153,7 +164,8 @@ static GUEST_DISK_WRITE: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_disk_write_bytes_total",
         "Cumulative disk write bytes",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_UPTIME: Lazy<GaugeVec> = Lazy::new(|| {
@@ -161,7 +173,8 @@ static GUEST_UPTIME: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_uptime_seconds",
         "Uptime of a running guest",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static GUEST_STATUS: Lazy<GaugeVec> = Lazy::new(|| {
@@ -169,7 +182,8 @@ static GUEST_STATUS: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_guest_running",
         "1 if guest is running, 0 otherwise",
         &["vmid", "name", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 // LXC cgroup detail
@@ -178,7 +192,8 @@ static LXC_MEM_CURRENT: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_lxc_cgroup_memory_current_bytes",
         "Current memory usage from cgroup v2",
         &["vmid", "name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static LXC_MEM_ANON: Lazy<GaugeVec> = Lazy::new(|| {
@@ -186,7 +201,8 @@ static LXC_MEM_ANON: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_lxc_cgroup_memory_anon_bytes",
         "Anonymous (heap/stack) memory from cgroup",
         &["vmid", "name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static LXC_CPU_THROTTLED: Lazy<GaugeVec> = Lazy::new(|| {
@@ -194,7 +210,8 @@ static LXC_CPU_THROTTLED: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_lxc_cgroup_cpu_throttled_total",
         "Total CPU throttle events from cgroup",
         &["vmid", "name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static LXC_PID_COUNT: Lazy<GaugeVec> = Lazy::new(|| {
@@ -202,7 +219,8 @@ static LXC_PID_COUNT: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_lxc_cgroup_pid_count",
         "Current PID count from cgroup",
         &["vmid", "name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static LXC_SWAP_CURRENT: Lazy<GaugeVec> = Lazy::new(|| {
@@ -210,7 +228,8 @@ static LXC_SWAP_CURRENT: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_lxc_cgroup_swap_current_bytes",
         "Current swap usage from cgroup",
         &["vmid", "name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_SWAP_USED: Lazy<GaugeVec> = Lazy::new(|| {
@@ -218,7 +237,8 @@ static NODE_SWAP_USED: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_swap_used_bytes",
         "Node swap used bytes",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static NODE_SWAP_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
@@ -226,7 +246,8 @@ static NODE_SWAP_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_node_swap_total_bytes",
         "Node swap total bytes",
         &["node"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 // Storage
@@ -235,7 +256,8 @@ static STORAGE_USED: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_storage_used_bytes",
         "Storage used bytes",
         &["storage", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static STORAGE_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
@@ -243,7 +265,8 @@ static STORAGE_TOTAL: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_storage_total_bytes",
         "Storage total bytes",
         &["storage", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static STORAGE_AVAIL: Lazy<GaugeVec> = Lazy::new(|| {
@@ -251,7 +274,8 @@ static STORAGE_AVAIL: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_storage_avail_bytes",
         "Storage available bytes",
         &["storage", "node", "type"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 // Log alerts
@@ -261,7 +285,8 @@ static LOG_ALERTS: Lazy<CounterVec> = Lazy::new(|| {
         "pve_log_alert_total",
         "Total log alerts matched",
         &["source", "pattern", "severity"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 // HAProxy metrics
@@ -270,7 +295,8 @@ static HAPROXY_SERVER_UP: Lazy<GaugeVec> = Lazy::new(|| {
         "haproxy_server_up",
         "HAProxy server status (1=UP, 0=DOWN)",
         &["proxy", "server"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static HAPROXY_SESSIONS: Lazy<GaugeVec> = Lazy::new(|| {
@@ -278,7 +304,8 @@ static HAPROXY_SESSIONS: Lazy<GaugeVec> = Lazy::new(|| {
         "haproxy_server_sessions_current",
         "HAProxy current sessions",
         &["proxy", "server"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static HAPROXY_BYTES_IN: Lazy<GaugeVec> = Lazy::new(|| {
@@ -286,7 +313,8 @@ static HAPROXY_BYTES_IN: Lazy<GaugeVec> = Lazy::new(|| {
         "haproxy_server_bytes_in_total",
         "HAProxy bytes received",
         &["proxy", "server"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static HAPROXY_BYTES_OUT: Lazy<GaugeVec> = Lazy::new(|| {
@@ -294,7 +322,8 @@ static HAPROXY_BYTES_OUT: Lazy<GaugeVec> = Lazy::new(|| {
         "haproxy_server_bytes_out_total",
         "HAProxy bytes sent",
         &["proxy", "server"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static HAPROXY_HTTP_5XX: Lazy<GaugeVec> = Lazy::new(|| {
@@ -302,7 +331,8 @@ static HAPROXY_HTTP_5XX: Lazy<GaugeVec> = Lazy::new(|| {
         "haproxy_server_http_5xx_total",
         "HAProxy HTTP 5xx responses",
         &["proxy", "server"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static HAPROXY_DOWNTIME: Lazy<GaugeVec> = Lazy::new(|| {
@@ -310,7 +340,8 @@ static HAPROXY_DOWNTIME: Lazy<GaugeVec> = Lazy::new(|| {
         "haproxy_server_downtime_seconds",
         "HAProxy server total downtime",
         &["proxy", "server"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 // Application specific metrics
@@ -319,7 +350,8 @@ static APP_METRIC: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_app_metric",
         "Generic application metric value",
         &["app", "metric"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 // Database & Storage metrics
@@ -328,7 +360,8 @@ static POSTGRES_UP: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_postgres_up",
         "Postgres connection status (1 = up, 0 = down)",
         &["name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static POSTGRES_CONNECTIONS: Lazy<GaugeVec> = Lazy::new(|| {
@@ -336,7 +369,8 @@ static POSTGRES_CONNECTIONS: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_postgres_connections_total",
         "Total number of active connections",
         &["name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static POSTGRES_LATENCY_MS: Lazy<GaugeVec> = Lazy::new(|| {
@@ -344,7 +378,8 @@ static POSTGRES_LATENCY_MS: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_postgres_avg_query_latency_ms",
         "Average query latency in milliseconds",
         &["name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static REDIS_UP: Lazy<GaugeVec> = Lazy::new(|| {
@@ -352,7 +387,8 @@ static REDIS_UP: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_redis_up",
         "Redis connection status (1 = up, 0 = down)",
         &["name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static REDIS_MEMORY: Lazy<GaugeVec> = Lazy::new(|| {
@@ -360,7 +396,8 @@ static REDIS_MEMORY: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_redis_memory_used_bytes",
         "Redis memory usage in bytes",
         &["name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static OBJECT_STORAGE_UP: Lazy<GaugeVec> = Lazy::new(|| {
@@ -368,7 +405,8 @@ static OBJECT_STORAGE_UP: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_object_storage_up",
         "Object storage health (1 = healthy, 0 = down)",
         &["name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static OBJECT_STORAGE_LATENCY_MS: Lazy<GaugeVec> = Lazy::new(|| {
@@ -376,7 +414,8 @@ static OBJECT_STORAGE_LATENCY_MS: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_object_storage_latency_ms",
         "Object storage request latency in ms",
         &["name"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 static PLATFORM_HEALTH_STATUS: Lazy<GaugeVec> = Lazy::new(|| {
@@ -392,7 +431,8 @@ static PLATFORM_HEALTH_VALUE: Lazy<GaugeVec> = Lazy::new(|| {
         "pve_platform_health_value",
         "Numeric summary values emitted by platform collectors",
         &["component", "name", "metric"]
-    ).unwrap()
+    )
+    .unwrap()
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -406,20 +446,28 @@ pub fn inc_oom_killer(node: &str) {
 pub fn update_postgres(name: &str, up: bool, conns: i64, latency_ms: f64) {
     let status = if up { 1.0 } else { 0.0 };
     POSTGRES_UP.with_label_values(&[name]).set(status);
-    POSTGRES_CONNECTIONS.with_label_values(&[name]).set(conns as f64);
-    POSTGRES_LATENCY_MS.with_label_values(&[name]).set(latency_ms);
+    POSTGRES_CONNECTIONS
+        .with_label_values(&[name])
+        .set(conns as f64);
+    POSTGRES_LATENCY_MS
+        .with_label_values(&[name])
+        .set(latency_ms);
 }
 
 pub fn update_redis(name: &str, up: bool, mem_bytes: i64) {
     let status = if up { 1.0 } else { 0.0 };
     REDIS_UP.with_label_values(&[name]).set(status);
-    REDIS_MEMORY.with_label_values(&[name]).set(mem_bytes as f64);
+    REDIS_MEMORY
+        .with_label_values(&[name])
+        .set(mem_bytes as f64);
 }
 
 pub fn update_object_storage(name: &str, up: bool, latency_ms: f64) {
     let status = if up { 1.0 } else { 0.0 };
     OBJECT_STORAGE_UP.with_label_values(&[name]).set(status);
-    OBJECT_STORAGE_LATENCY_MS.with_label_values(&[name]).set(latency_ms);
+    OBJECT_STORAGE_LATENCY_MS
+        .with_label_values(&[name])
+        .set(latency_ms);
 }
 
 pub fn update_platform_health(component: &str, name: &str, status: &str) {
@@ -431,11 +479,15 @@ pub fn update_platform_health(component: &str, name: &str, status: &str) {
         "not-installed" => -1.0,
         _ => -1.0,
     };
-    PLATFORM_HEALTH_STATUS.with_label_values(&[component, name]).set(value);
+    PLATFORM_HEALTH_STATUS
+        .with_label_values(&[component, name])
+        .set(value);
 }
 
 pub fn update_platform_value(component: &str, name: &str, metric: &str, value: f64) {
-    PLATFORM_HEALTH_VALUE.with_label_values(&[component, name, metric]).set(value);
+    PLATFORM_HEALTH_VALUE
+        .with_label_values(&[component, name, metric])
+        .set(value);
 }
 
 pub fn update_app_metrics(name: &str, metric: &str, value: f64) {
@@ -445,15 +497,29 @@ pub fn update_app_metrics(name: &str, metric: &str, value: f64) {
 pub fn update_node(n: &NodeStatus) {
     let nd = &n.node;
     NODE_CPU_USAGE.with_label_values(&[nd]).set(n.cpu_usage);
-    NODE_MEM_USED.with_label_values(&[nd]).set(n.mem_used as f64);
-    NODE_MEM_TOTAL.with_label_values(&[nd]).set(n.mem_total as f64);
-    NODE_SWAP_USED.with_label_values(&[nd]).set(n.swap_used as f64);
-    NODE_SWAP_TOTAL.with_label_values(&[nd]).set(n.swap_total as f64);
-    NODE_DISK_USED.with_label_values(&[nd]).set(n.disk_used as f64);
-    NODE_DISK_TOTAL.with_label_values(&[nd]).set(n.disk_total as f64);
+    NODE_MEM_USED
+        .with_label_values(&[nd])
+        .set(n.mem_used as f64);
+    NODE_MEM_TOTAL
+        .with_label_values(&[nd])
+        .set(n.mem_total as f64);
+    NODE_SWAP_USED
+        .with_label_values(&[nd])
+        .set(n.swap_used as f64);
+    NODE_SWAP_TOTAL
+        .with_label_values(&[nd])
+        .set(n.swap_total as f64);
+    NODE_DISK_USED
+        .with_label_values(&[nd])
+        .set(n.disk_used as f64);
+    NODE_DISK_TOTAL
+        .with_label_values(&[nd])
+        .set(n.disk_total as f64);
     NODE_LOAD_AVG.with_label_values(&[nd, "1"]).set(n.load_avg1);
     NODE_LOAD_AVG.with_label_values(&[nd, "5"]).set(n.load_avg5);
-    NODE_LOAD_AVG.with_label_values(&[nd, "15"]).set(n.load_avg15);
+    NODE_LOAD_AVG
+        .with_label_values(&[nd, "15"])
+        .set(n.load_avg15);
     NODE_UPTIME.with_label_values(&[nd]).set(n.uptime as f64);
 }
 
@@ -464,17 +530,35 @@ pub fn update_guest(g: &GuestStatus) {
         GuestKind::Lxc => "lxc",
     };
     let labels = &[vmid.as_str(), g.name.as_str(), g.node.as_str(), kind];
-    let labels_status = &[vmid.as_str(), g.name.as_str(), g.node.as_str(), kind, g.status.as_str()];
+    let labels_status = &[
+        vmid.as_str(),
+        g.name.as_str(),
+        g.node.as_str(),
+        kind,
+        g.status.as_str(),
+    ];
 
     GUEST_CPU.with_label_values(labels_status).set(g.cpu_usage);
-    GUEST_MEM_USED.with_label_values(labels).set(g.mem_used as f64);
-    GUEST_MEM_TOTAL.with_label_values(labels).set(g.mem_total as f64);
+    GUEST_MEM_USED
+        .with_label_values(labels)
+        .set(g.mem_used as f64);
+    GUEST_MEM_TOTAL
+        .with_label_values(labels)
+        .set(g.mem_total as f64);
     GUEST_NET_IN.with_label_values(labels).set(g.net_in as f64);
-    GUEST_NET_OUT.with_label_values(labels).set(g.net_out as f64);
-    GUEST_DISK_READ.with_label_values(labels).set(g.disk_read as f64);
-    GUEST_DISK_WRITE.with_label_values(labels).set(g.disk_write as f64);
+    GUEST_NET_OUT
+        .with_label_values(labels)
+        .set(g.net_out as f64);
+    GUEST_DISK_READ
+        .with_label_values(labels)
+        .set(g.disk_read as f64);
+    GUEST_DISK_WRITE
+        .with_label_values(labels)
+        .set(g.disk_write as f64);
     GUEST_UPTIME.with_label_values(labels).set(g.uptime as f64);
-    GUEST_STATUS.with_label_values(labels).set(if g.status == "running" { 1.0 } else { 0.0 });
+    GUEST_STATUS
+        .with_label_values(labels)
+        .set(if g.status == "running" { 1.0 } else { 0.0 });
 }
 
 pub fn update_lxc_detail(s: &LxcDetailedStats) {
@@ -482,11 +566,21 @@ pub fn update_lxc_detail(s: &LxcDetailedStats) {
     let name = s.name.as_str();
     let cg = &s.cgroup;
 
-    LXC_MEM_CURRENT.with_label_values(&[&vmid, name]).set(cg.mem_current as f64);
-    LXC_MEM_ANON.with_label_values(&[&vmid, name]).set(cg.mem_anon as f64);
-    LXC_CPU_THROTTLED.with_label_values(&[&vmid, name]).set(cg.cpu_nr_throttled as f64);
-    LXC_PID_COUNT.with_label_values(&[&vmid, name]).set(cg.pid_current as f64);
-    LXC_SWAP_CURRENT.with_label_values(&[&vmid, name]).set(cg.mem_swap_current as f64);
+    LXC_MEM_CURRENT
+        .with_label_values(&[&vmid, name])
+        .set(cg.mem_current as f64);
+    LXC_MEM_ANON
+        .with_label_values(&[&vmid, name])
+        .set(cg.mem_anon as f64);
+    LXC_CPU_THROTTLED
+        .with_label_values(&[&vmid, name])
+        .set(cg.cpu_nr_throttled as f64);
+    LXC_PID_COUNT
+        .with_label_values(&[&vmid, name])
+        .set(cg.pid_current as f64);
+    LXC_SWAP_CURRENT
+        .with_label_values(&[&vmid, name])
+        .set(cg.mem_swap_current as f64);
 }
 
 pub fn update_storage(s: &StorageStatus) {
@@ -498,7 +592,9 @@ pub fn update_storage(s: &StorageStatus) {
 
 #[allow(dead_code)]
 pub fn record_log_alert(source: &str, pattern: &str, severity: &str) {
-    LOG_ALERTS.with_label_values(&[source, pattern, severity]).inc();
+    LOG_ALERTS
+        .with_label_values(&[source, pattern, severity])
+        .inc();
 }
 
 pub fn update_haproxy(stats: &crate::collectors::haproxy::HaproxyStats) {
@@ -508,11 +604,21 @@ pub fn update_haproxy(stats: &crate::collectors::haproxy::HaproxyStats) {
             let up_val = if server.status == "UP" { 1.0 } else { 0.0 };
 
             HAPROXY_SERVER_UP.with_label_values(labels).set(up_val);
-            HAPROXY_SESSIONS.with_label_values(labels).set(server.sessions_current as f64);
-            HAPROXY_BYTES_IN.with_label_values(labels).set(server.bytes_in as f64);
-            HAPROXY_BYTES_OUT.with_label_values(labels).set(server.bytes_out as f64);
-            HAPROXY_HTTP_5XX.with_label_values(labels).set(server.http_5xx as f64);
-            HAPROXY_DOWNTIME.with_label_values(labels).set(server.downtime_secs as f64);
+            HAPROXY_SESSIONS
+                .with_label_values(labels)
+                .set(server.sessions_current as f64);
+            HAPROXY_BYTES_IN
+                .with_label_values(labels)
+                .set(server.bytes_in as f64);
+            HAPROXY_BYTES_OUT
+                .with_label_values(labels)
+                .set(server.bytes_out as f64);
+            HAPROXY_HTTP_5XX
+                .with_label_values(labels)
+                .set(server.http_5xx as f64);
+            HAPROXY_DOWNTIME
+                .with_label_values(labels)
+                .set(server.downtime_secs as f64);
         }
     }
 }
@@ -538,7 +644,15 @@ struct AppState {
 }
 
 impl MetricsServer {
-    pub fn new(addr: &str, port: u16, tx: broadcast::Sender<String>, storage: Option<std::sync::Arc<crate::storage::Storage>>, hub_state: Option<crate::cluster::HubState>, auth: Option<String>, prometheus_enabled: bool) -> Self {
+    pub fn new(
+        addr: &str,
+        port: u16,
+        tx: broadcast::Sender<String>,
+        storage: Option<std::sync::Arc<crate::storage::Storage>>,
+        hub_state: Option<crate::cluster::HubState>,
+        auth: Option<String>,
+        prometheus_enabled: bool,
+    ) -> Self {
         Self {
             addr: format!("{}:{}", addr, port),
             tx,
@@ -550,23 +664,28 @@ impl MetricsServer {
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let expected_auth = self
-            .auth
-            .and_then(|a| {
-                let trimmed = a.trim().to_string();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(format!("Basic {}", BASE64_STANDARD.encode(trimmed)))
-                }
-            });
-        let state = AppState { tx: self.tx, expected_auth, storage: self.storage };
+        let expected_auth = self.auth.and_then(|a| {
+            let trimmed = a.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(format!("Basic {}", BASE64_STANDARD.encode(trimmed)))
+            }
+        });
+        let state = AppState {
+            tx: self.tx,
+            expected_auth,
+            storage: self.storage,
+        };
 
         let mut protected = Router::new()
             .route("/api/status", get(status_handler))
             .route("/api/v1/alerts/test", post(test_alert_handler))
             .route("/api/v1/alerts/recent", get(recent_alerts_handler))
-            .route("/api/v1/history/node/{node}/metrics", get(node_history_handler))
+            .route(
+                "/api/v1/history/node/{node}/metrics",
+                get(node_history_handler),
+            )
             .route("/api/v1/apps/{name}/history", get(app_history_handler))
             .route("/ws", get(ws_handler))
             .fallback(static_handler);
@@ -576,7 +695,10 @@ impl MetricsServer {
         }
 
         if state.expected_auth.is_some() {
-            protected = protected.route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+            protected = protected.route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ));
         }
 
         let mut app = Router::new()
@@ -603,8 +725,12 @@ async fn auth_middleware(
     next: Next,
 ) -> Result<Response, Response> {
     if let Some(ref expected) = state.expected_auth {
-        let auth_header = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).unwrap_or("");
-        
+        let auth_header = req
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("");
+
         // Use timing-safe compare to prevent timing attacks
         let is_valid = bool::from(auth_header.as_bytes().ct_eq(expected.as_bytes()));
         if !is_valid {
@@ -623,7 +749,9 @@ async fn metrics_handler() -> impl IntoResponse {
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer).unwrap_or_default();
+    encoder
+        .encode(&metric_families, &mut buffer)
+        .unwrap_or_default();
 
     (
         StatusCode::OK,
@@ -652,7 +780,8 @@ async fn node_history_handler(
     axum::extract::Path(node): axum::extract::Path<String>,
 ) -> impl IntoResponse {
     if let Some(ref storage) = state.storage {
-        match storage.query_node_history(&node, 60 * 24) { // Get last 24h by default, or could take query params
+        match storage.query_node_history(&node, 60 * 24) {
+            // Get last 24h by default, or could take query params
             Ok(history) => (StatusCode::OK, Json(serde_json::json!(history))).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
@@ -666,8 +795,14 @@ async fn app_history_handler(
     axum::extract::Path(name): axum::extract::Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let metric = params.get("metric").cloned().unwrap_or_else(|| "active_users".to_string());
-    let minutes = params.get("minutes").and_then(|m| m.parse::<u32>().ok()).unwrap_or(60);
+    let metric = params
+        .get("metric")
+        .cloned()
+        .unwrap_or_else(|| "active_users".to_string());
+    let minutes = params
+        .get("minutes")
+        .and_then(|m| m.parse::<u32>().ok())
+        .unwrap_or(60);
 
     if let Some(ref storage) = state.storage {
         match storage.query_app_history(&name, &metric, minutes) {
@@ -715,7 +850,8 @@ fn serve_asset(path: &str) -> Response {
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, mime.as_ref())],
                 axum::body::Body::from(content.data),
-            ).into_response()
+            )
+                .into_response()
         }
         None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
     }
@@ -726,7 +862,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    use futures::{stream::StreamExt, SinkExt};
+    use futures::{SinkExt, stream::StreamExt};
     let (mut sender, mut receiver) = socket.split();
     let mut rx = state.tx.subscribe();
 
@@ -766,9 +902,7 @@ struct TestAlertRequest {
     webhook_url: String,
 }
 
-async fn test_alert_handler(
-    Json(payload): Json<TestAlertRequest>,
-) -> impl IntoResponse {
+async fn test_alert_handler(Json(payload): Json<TestAlertRequest>) -> impl IntoResponse {
     let mut dispatcher = crate::alerts::AlertDispatcher::new(
         crate::config::AlertConfig {
             enabled: true,
@@ -780,9 +914,11 @@ async fn test_alert_handler(
         None,
     );
 
-    dispatcher.dispatch(crate::alerts::Alert::Test {
-        message: "Manually triggered from Sentinel UI".to_string(),
-    }).await;
+    dispatcher
+        .dispatch(crate::alerts::Alert::Test {
+            message: "Manually triggered from Sentinel UI".to_string(),
+        })
+        .await;
 
     (StatusCode::OK, "Test alert sent")
 }

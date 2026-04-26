@@ -7,9 +7,9 @@
 // Implements basic deduplication: same alert won't re-fire within
 // a configurable silence window (default: 5 minutes).
 
+use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::Serialize;
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,34 +34,124 @@ static SHARED_SILENCE_MAP: Lazy<Arc<Mutex<HashMap<String, Instant>>>> =
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Alert {
-    NodeHighCpu { node: String, cpu_pct: f64 },
-    NodeHighMemory { node: String, mem_pct: f64 },
-    NodeHighDisk { node: String, disk_pct: f64 },
-    GuestDown { vmid: u32, name: String, node: String },
-    GuestHighCpu { vmid: u32, name: String, cpu_pct: f64 },
-    GuestHighMemory { vmid: u32, name: String, mem_pct: f64 },
-    DiskFull { vmid: u32, name: String, mountpoint: String, use_pct: f64 },
+    NodeHighCpu {
+        node: String,
+        cpu_pct: f64,
+    },
+    NodeHighMemory {
+        node: String,
+        mem_pct: f64,
+    },
+    NodeHighDisk {
+        node: String,
+        disk_pct: f64,
+    },
+    GuestDown {
+        vmid: u32,
+        name: String,
+        node: String,
+    },
+    GuestHighCpu {
+        vmid: u32,
+        name: String,
+        cpu_pct: f64,
+    },
+    GuestHighMemory {
+        vmid: u32,
+        name: String,
+        mem_pct: f64,
+    },
+    DiskFull {
+        vmid: u32,
+        name: String,
+        mountpoint: String,
+        use_pct: f64,
+    },
     LogPattern(LogAlert),
-    StorageUnavailable { storage: String, node: String },
-    HaproxyBackendDown { proxy: String, server: String, duration_secs: u64 },
-    ServiceUnavailable { vmid: u32, node: String, service: String },
-    PostgresDown { url: String, _error: String },
-    RedisDown { url: String, _error: String },
-    S3Degraded { endpoint: String, bucket: String, _error: String },
-    MigrationDetected { vmid: u32, name: String, from_node: String, to_node: String },
-    NodePressureCritical { node: String, mem_pct: f64, suggest_vmid: Option<u32>, target_node: Option<String> },
-    VmConnectionLost { vmid: u32, name: String, node: String },
-    OomKilled { node: String, process: String },
-    AppDown { name: String },
-    AppHighErrorRate { name: String, error_rate: f64 },
-    AppAuthFailures { name: String, count: u64 },
+    StorageUnavailable {
+        storage: String,
+        node: String,
+    },
+    HaproxyBackendDown {
+        proxy: String,
+        server: String,
+        duration_secs: u64,
+    },
+    ServiceUnavailable {
+        vmid: u32,
+        node: String,
+        service: String,
+    },
+    PostgresDown {
+        url: String,
+        _error: String,
+    },
+    RedisDown {
+        url: String,
+        _error: String,
+    },
+    S3Degraded {
+        endpoint: String,
+        bucket: String,
+        _error: String,
+    },
+    MigrationDetected {
+        vmid: u32,
+        name: String,
+        from_node: String,
+        to_node: String,
+    },
+    NodePressureCritical {
+        node: String,
+        mem_pct: f64,
+        suggest_vmid: Option<u32>,
+        target_node: Option<String>,
+    },
+    VmConnectionLost {
+        vmid: u32,
+        name: String,
+        node: String,
+    },
+    OomKilled {
+        node: String,
+        process: String,
+    },
+    AppDown {
+        name: String,
+    },
+    AppHighErrorRate {
+        name: String,
+        error_rate: f64,
+    },
+    AppAuthFailures {
+        name: String,
+        count: u64,
+    },
     #[allow(dead_code)]
-    AppStorageFull { name: String, usage_pct: f64 },
+    AppStorageFull {
+        name: String,
+        usage_pct: f64,
+    },
     #[allow(dead_code)]
-    AppVersionMismatch { name: String, expected: String, found: String },
-    PlatformIssue { key: String, severity: String, summary: String },
-    CustomRuleTriggered { name: String, scope: String, severity: String, summary: String },
-    Test { message: String },
+    AppVersionMismatch {
+        name: String,
+        expected: String,
+        found: String,
+    },
+    PlatformIssue {
+        key: String,
+        severity: String,
+        summary: String,
+    },
+    CustomRuleTriggered {
+        name: String,
+        scope: String,
+        severity: String,
+        summary: String,
+    },
+    Test {
+        message: String,
+    },
 }
 
 impl Alert {
@@ -73,15 +163,28 @@ impl Alert {
             Alert::GuestDown { vmid, .. } => format!("guest_down:{vmid}"),
             Alert::GuestHighCpu { vmid, .. } => format!("guest_cpu:{vmid}"),
             Alert::GuestHighMemory { vmid, .. } => format!("guest_mem:{vmid}"),
-            Alert::DiskFull { vmid, mountpoint, .. } => format!("disk_full:{vmid}:{mountpoint}"),
+            Alert::DiskFull {
+                vmid, mountpoint, ..
+            } => format!("disk_full:{vmid}:{mountpoint}"),
             Alert::LogPattern(l) => format!("log:{}:{}", l.source, l.pattern),
             Alert::StorageUnavailable { storage, node } => format!("storage:{node}:{storage}"),
-            Alert::HaproxyBackendDown { proxy, server, .. } => format!("haproxy_down:{proxy}:{server}"),
-            Alert::ServiceUnavailable { vmid, service, .. } => format!("service_down:{vmid}:{service}"),
+            Alert::HaproxyBackendDown { proxy, server, .. } => {
+                format!("haproxy_down:{proxy}:{server}")
+            }
+            Alert::ServiceUnavailable { vmid, service, .. } => {
+                format!("service_down:{vmid}:{service}")
+            }
             Alert::PostgresDown { url, .. } => format!("postgres_down:{url}"),
             Alert::RedisDown { url, .. } => format!("redis_down:{url}"),
-            Alert::S3Degraded { endpoint, bucket, .. } => format!("s3_degraded:{endpoint}:{bucket}"),
-            Alert::MigrationDetected { vmid, from_node, to_node, .. } => format!("migration:{vmid}:{from_node}:{to_node}"),
+            Alert::S3Degraded {
+                endpoint, bucket, ..
+            } => format!("s3_degraded:{endpoint}:{bucket}"),
+            Alert::MigrationDetected {
+                vmid,
+                from_node,
+                to_node,
+                ..
+            } => format!("migration:{vmid}:{from_node}:{to_node}"),
             Alert::NodePressureCritical { node, .. } => format!("node_pressure:{node}"),
             Alert::VmConnectionLost { vmid, .. } => format!("vm_conn_lost:{vmid}"),
             Alert::OomKilled { node, process } => format!("oom_killed:{node}:{process}"),
@@ -123,9 +226,14 @@ impl Alert {
             },
             Alert::MigrationDetected { .. } => "info",
             Alert::NodeHighCpu { cpu_pct, .. } | Alert::GuestHighCpu { cpu_pct, .. }
-                if *cpu_pct > 95.0 => "critical",
-            Alert::NodeHighDisk { disk_pct, .. } | Alert::DiskFull { use_pct: disk_pct, .. }
-                if *disk_pct > 95.0 => "critical",
+                if *cpu_pct > 95.0 =>
+            {
+                "critical"
+            }
+            Alert::NodeHighDisk { disk_pct, .. }
+            | Alert::DiskFull {
+                use_pct: disk_pct, ..
+            } if *disk_pct > 95.0 => "critical",
             Alert::LogPattern(l) => match l.severity {
                 AlertSeverity::Critical => "critical",
                 AlertSeverity::Warning => "warning",
@@ -137,68 +245,104 @@ impl Alert {
 
     pub fn summary(&self) -> String {
         match self {
-            Alert::NodeHighCpu { node, cpu_pct } =>
-                format!("Node {node} CPU at {cpu_pct:.1}%"),
-            Alert::NodeHighMemory { node, mem_pct } =>
-                format!("Node {node} memory at {mem_pct:.1}%"),
-            Alert::NodeHighDisk { node, disk_pct } =>
-                format!("Node {node} disk at {disk_pct:.1}%"),
-            Alert::GuestDown { name, vmid, node } =>
-                format!("Guest {name} (vmid {vmid}) down on {node}"),
-            Alert::GuestHighCpu { name, vmid, cpu_pct } =>
-                format!("Guest {name} ({vmid}) CPU at {cpu_pct:.1}%"),
-            Alert::GuestHighMemory { name, vmid, mem_pct } =>
-                format!("Guest {name} ({vmid}) memory at {mem_pct:.1}%"),
-            Alert::DiskFull { name, mountpoint, use_pct, .. } =>
-                format!("Disk {mountpoint} on {name} at {use_pct:.1}%"),
-            Alert::LogPattern(l) =>
-                format!("[{}] {} matched '{}': {}",
-                    l.severity.as_str(), l.source, l.pattern,
-                    &l.line[..l.line.len().min(100)]),
-            Alert::StorageUnavailable { storage, node } =>
-                format!("Storage {storage} unavailable on {node}"),
-            Alert::HaproxyBackendDown { proxy, server, duration_secs } =>
-                format!("HAProxy {proxy}/{server} DOWN for {duration_secs}s"),
-            Alert::ServiceUnavailable { vmid, node, service } =>
-                format!("Critical service '{service}' is DOWN on VM {vmid} ({node})"),
-            Alert::PostgresDown { url, _error } =>
-                format!("PostgreSQL down at {url}: {_error}"),
-            Alert::RedisDown { url, _error } =>
-                format!("Redis down at {url}: {_error}"),
-            Alert::S3Degraded { endpoint, bucket, _error } =>
-                format!("S3 degraded at {endpoint} bucket {bucket}: {_error}"),
-            Alert::MigrationDetected { vmid, name, from_node, to_node } =>
-                format!("VM {name} ({vmid}) migrated from {from_node} to {to_node}"),
-            Alert::NodePressureCritical { node, mem_pct, suggest_vmid, target_node } => {
+            Alert::NodeHighCpu { node, cpu_pct } => format!("Node {node} CPU at {cpu_pct:.1}%"),
+            Alert::NodeHighMemory { node, mem_pct } => {
+                format!("Node {node} memory at {mem_pct:.1}%")
+            }
+            Alert::NodeHighDisk { node, disk_pct } => format!("Node {node} disk at {disk_pct:.1}%"),
+            Alert::GuestDown { name, vmid, node } => {
+                format!("Guest {name} (vmid {vmid}) down on {node}")
+            }
+            Alert::GuestHighCpu {
+                name,
+                vmid,
+                cpu_pct,
+            } => format!("Guest {name} ({vmid}) CPU at {cpu_pct:.1}%"),
+            Alert::GuestHighMemory {
+                name,
+                vmid,
+                mem_pct,
+            } => format!("Guest {name} ({vmid}) memory at {mem_pct:.1}%"),
+            Alert::DiskFull {
+                name,
+                mountpoint,
+                use_pct,
+                ..
+            } => format!("Disk {mountpoint} on {name} at {use_pct:.1}%"),
+            Alert::LogPattern(l) => format!(
+                "[{}] {} matched '{}': {}",
+                l.severity.as_str(),
+                l.source,
+                l.pattern,
+                &l.line[..l.line.len().min(100)]
+            ),
+            Alert::StorageUnavailable { storage, node } => {
+                format!("Storage {storage} unavailable on {node}")
+            }
+            Alert::HaproxyBackendDown {
+                proxy,
+                server,
+                duration_secs,
+            } => format!("HAProxy {proxy}/{server} DOWN for {duration_secs}s"),
+            Alert::ServiceUnavailable {
+                vmid,
+                node,
+                service,
+            } => format!("Critical service '{service}' is DOWN on VM {vmid} ({node})"),
+            Alert::PostgresDown { url, _error } => format!("PostgreSQL down at {url}: {_error}"),
+            Alert::RedisDown { url, _error } => format!("Redis down at {url}: {_error}"),
+            Alert::S3Degraded {
+                endpoint,
+                bucket,
+                _error,
+            } => format!("S3 degraded at {endpoint} bucket {bucket}: {_error}"),
+            Alert::MigrationDetected {
+                vmid,
+                name,
+                from_node,
+                to_node,
+            } => format!("VM {name} ({vmid}) migrated from {from_node} to {to_node}"),
+            Alert::NodePressureCritical {
+                node,
+                mem_pct,
+                suggest_vmid,
+                target_node,
+            } => {
                 if let (Some(vmid), Some(target)) = (suggest_vmid, target_node) {
-                    format!("Node {node} pressure critical ({mem_pct:.1}% mem). Migration suggested: `qm migrate {vmid} {target} --online`")
+                    format!(
+                        "Node {node} pressure critical ({mem_pct:.1}% mem). Migration suggested: `qm migrate {vmid} {target} --online`"
+                    )
                 } else {
                     format!("Node {node} pressure critical ({mem_pct:.1}% mem).")
                 }
-            },
-            Alert::VmConnectionLost { vmid, name, node } =>
-                format!("VM {name} ({vmid}) on {node} lost connection (agent/ssh)"),
-            Alert::OomKilled { node, process } =>
-                format!("OOM Killer triggered on {node} for process '{process}'"),
-            Alert::AppDown { name } =>
-                format!("Application {name} is DOWN or unreachable"),
-            Alert::AppHighErrorRate { name, error_rate } =>
-                format!("Application {name} high error rate: {error_rate:.1}/min"),
-            Alert::AppAuthFailures { name, count } =>
-                format!("Application {name} detected {count} authentication failures in the last minute"),
-            Alert::AppStorageFull { name, usage_pct } =>
-                format!("Application {name} storage nearly full: {usage_pct:.1}%"),
-            Alert::AppVersionMismatch { name, expected, found } =>
-                format!("Application {name} version mismatch: expected {expected}, found {found}"),
+            }
+            Alert::VmConnectionLost { vmid, name, node } => {
+                format!("VM {name} ({vmid}) on {node} lost connection (agent/ssh)")
+            }
+            Alert::OomKilled { node, process } => {
+                format!("OOM Killer triggered on {node} for process '{process}'")
+            }
+            Alert::AppDown { name } => format!("Application {name} is DOWN or unreachable"),
+            Alert::AppHighErrorRate { name, error_rate } => {
+                format!("Application {name} high error rate: {error_rate:.1}/min")
+            }
+            Alert::AppAuthFailures { name, count } => format!(
+                "Application {name} detected {count} authentication failures in the last minute"
+            ),
+            Alert::AppStorageFull { name, usage_pct } => {
+                format!("Application {name} storage nearly full: {usage_pct:.1}%")
+            }
+            Alert::AppVersionMismatch {
+                name,
+                expected,
+                found,
+            } => format!("Application {name} version mismatch: expected {expected}, found {found}"),
             Alert::PlatformIssue { summary, .. } => summary.clone(),
             Alert::CustomRuleTriggered { summary, .. } => summary.clone(),
-            Alert::Test { message } =>
-                format!("SENTINEL TEST ALERT: {message}"),
+            Alert::Test { message } => format!("SENTINEL TEST ALERT: {message}"),
         }
     }
 }
-
-
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Alert dispatcher
@@ -214,7 +358,13 @@ pub struct AlertDispatcher {
 
 impl AlertDispatcher {
     pub fn new(mut cfg: AlertConfig, storage: Option<Arc<Storage>>) -> Self {
-        if cfg.webhook_url.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        if cfg
+            .webhook_url
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
             cfg.webhook_url = None;
         }
         let mut channels = Vec::new();
@@ -295,20 +445,29 @@ impl AlertDispatcher {
 
         let cpu_pct = n.cpu_usage * 100.0;
         if cpu_pct > self.cfg.cpu_threshold {
-            alerts.push(Alert::NodeHighCpu { node: n.node.clone(), cpu_pct });
+            alerts.push(Alert::NodeHighCpu {
+                node: n.node.clone(),
+                cpu_pct,
+            });
         }
 
         if n.mem_total > 0 {
             let mem_pct = (n.mem_used as f64 / n.mem_total as f64) * 100.0;
             if mem_pct > self.cfg.memory_threshold {
-                alerts.push(Alert::NodeHighMemory { node: n.node.clone(), mem_pct });
+                alerts.push(Alert::NodeHighMemory {
+                    node: n.node.clone(),
+                    mem_pct,
+                });
             }
         }
 
         if n.disk_total > 0 {
             let disk_pct = (n.disk_used as f64 / n.disk_total as f64) * 100.0;
             if disk_pct > self.cfg.disk_threshold {
-                alerts.push(Alert::NodeHighDisk { node: n.node.clone(), disk_pct });
+                alerts.push(Alert::NodeHighDisk {
+                    node: n.node.clone(),
+                    disk_pct,
+                });
             }
         }
 

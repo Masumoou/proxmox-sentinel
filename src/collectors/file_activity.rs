@@ -25,7 +25,10 @@ pub async fn run_collector(cfg: FileActivityConfig, ws_tx: broadcast::Sender<Str
         }
     };
 
-    info!("Starting File Activity collector on {} paths", cfg.watch_paths.len());
+    info!(
+        "Starting File Activity collector on {} paths",
+        cfg.watch_paths.len()
+    );
 
     for path in cfg.watch_paths {
         let ws_tx = ws_tx.clone();

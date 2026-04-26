@@ -2,7 +2,11 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "proxmox-sentinel", version, about = "Agentless Proxmox monitoring daemon")]
+#[command(
+    name = "proxmox-sentinel",
+    version,
+    about = "Agentless Proxmox monitoring daemon"
+)]
 pub struct Cli {
     /// Path to config file
     #[arg(short, long, default_value = "/etc/proxmox-sentinel/config.toml")]
@@ -27,7 +31,6 @@ pub enum Commands {
     /// Test Proxmox API connectivity and print node list
     TestApi,
 }
-
 
 impl Cli {
     pub fn parse_args() -> Self {

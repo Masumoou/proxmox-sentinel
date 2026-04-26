@@ -4,8 +4,14 @@ use openssl::x509::X509;
 use std::net::TcpStream;
 use std::time::Duration as StdDuration;
 
-pub(super) async fn collect_certs(cfg: &CertificateConfig, alerts: &mut Vec<Alert>) -> Vec<CertCheck> {
-    let mut targets = vec![("proxmox-local".to_string(), "local-pveproxy-cert".to_string())];
+pub(super) async fn collect_certs(
+    cfg: &CertificateConfig,
+    alerts: &mut Vec<Alert>,
+) -> Vec<CertCheck> {
+    let mut targets = vec![(
+        "proxmox-local".to_string(),
+        "local-pveproxy-cert".to_string(),
+    )];
     targets.extend(cfg.targets.iter().map(|t| (t.name.clone(), t.url.clone())));
 
     let mut rows = Vec::new();
@@ -26,7 +32,6 @@ pub(super) async fn collect_certs(cfg: &CertificateConfig, alerts: &mut Vec<Aler
     }
     rows
 }
-
 
 async fn check_local_cert(name: &str, cfg: &CertificateConfig) -> CertCheck {
     match tokio::fs::read("/etc/pve/local/pveproxy-ssl.pem").await {
@@ -55,13 +60,34 @@ async fn check_local_cert(name: &str, cfg: &CertificateConfig) -> CertCheck {
 async fn check_remote_cert(name: &str, url: &str, cfg: &CertificateConfig) -> CertCheck {
     let parsed = Url::parse(url);
     let Ok(parsed) = parsed else {
-        return CertCheck { name: name.into(), url: url.into(), status: "critical".into(), days_remaining: None, expires_at: None, detail: "invalid URL".into() };
+        return CertCheck {
+            name: name.into(),
+            url: url.into(),
+            status: "critical".into(),
+            days_remaining: None,
+            expires_at: None,
+            detail: "invalid URL".into(),
+        };
     };
     if parsed.scheme() != "https" {
-        return CertCheck { name: name.into(), url: url.into(), status: "unknown".into(), days_remaining: None, expires_at: None, detail: "certificate checks require https URL".into() };
+        return CertCheck {
+            name: name.into(),
+            url: url.into(),
+            status: "unknown".into(),
+            days_remaining: None,
+            expires_at: None,
+            detail: "certificate checks require https URL".into(),
+        };
     }
     let Some(host) = parsed.host_str() else {
-        return CertCheck { name: name.into(), url: url.into(), status: "critical".into(), days_remaining: None, expires_at: None, detail: "missing host".into() };
+        return CertCheck {
+            name: name.into(),
+            url: url.into(),
+            status: "critical".into(),
+            days_remaining: None,
+            expires_at: None,
+            detail: "missing host".into(),
+        };
     };
     let port = parsed.port_or_known_default().unwrap_or(443);
     match fetch_remote_cert_enddate(host, port).await {
@@ -85,7 +111,14 @@ fn not_after_from_pem(bytes: &[u8]) -> Result<String> {
 fn cert_from_not_after(name: &str, url: &str, out: &str, cfg: &CertificateConfig) -> CertCheck {
     let raw = out.trim().strip_prefix("notAfter=").unwrap_or("").trim();
     if raw.is_empty() {
-        return CertCheck { name: name.into(), url: url.into(), status: "unknown".into(), days_remaining: None, expires_at: None, detail: "certificate expiry unavailable".into() };
+        return CertCheck {
+            name: name.into(),
+            url: url.into(),
+            status: "unknown".into(),
+            days_remaining: None,
+            expires_at: None,
+            detail: "certificate expiry unavailable".into(),
+        };
     }
     let parsed_ts = chrono::DateTime::parse_from_str(raw, "%b %e %H:%M:%S %Y %Z")
         .map(|dt| dt.timestamp())
@@ -101,22 +134,23 @@ fn cert_from_not_after(name: &str, url: &str, out: &str, cfg: &CertificateConfig
         Some(d) if d <= cfg.warn_days as i64 => "warning",
         Some(_) => "ok",
         None => "unknown",
-    }.to_string();
+    }
+    .to_string();
     CertCheck {
         name: name.into(),
         url: url.into(),
         status,
         days_remaining: days,
-        expires_at: parsed_ts.and_then(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).map(|d| d.to_rfc3339())),
+        expires_at: parsed_ts.and_then(|ts| {
+            chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).map(|d| d.to_rfc3339())
+        }),
         detail: raw.into(),
     }
 }
 
-
 async fn fetch_remote_cert_enddate(host: &str, port: u16) -> Result<String> {
     let host = host.to_string();
-    tokio::task::spawn_blocking(move || fetch_remote_cert_enddate_blocking(&host, port))
-        .await?
+    tokio::task::spawn_blocking(move || fetch_remote_cert_enddate_blocking(&host, port)).await?
 }
 
 fn fetch_remote_cert_enddate_blocking(host: &str, port: u16) -> Result<String> {
@@ -146,7 +180,12 @@ mod tests {
     #[test]
     fn parses_certificate_expiry_as_ok_for_future_date() {
         let cfg = CertificateConfig::default();
-        let check = cert_from_not_after("test", "https://example.com", "notAfter=Apr 25 12:00:00 2099 GMT", &cfg);
+        let check = cert_from_not_after(
+            "test",
+            "https://example.com",
+            "notAfter=Apr 25 12:00:00 2099 GMT",
+            &cfg,
+        );
         assert_eq!(check.status, "ok");
         assert!(check.days_remaining.unwrap_or_default() > 0);
     }

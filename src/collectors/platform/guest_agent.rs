@@ -22,7 +22,10 @@ pub(super) async fn collect_guest_agent_health(
             alerts.push(platform_alert(
                 format!("guest_agent:{}:{}", guest.node, guest.vmid),
                 "warning",
-                format!("QEMU guest agent not responding for {} ({}) on {}: {}", guest.name, guest.vmid, guest.node, detail),
+                format!(
+                    "QEMU guest agent not responding for {} ({}) on {}: {}",
+                    guest.name, guest.vmid, guest.node, detail
+                ),
             ));
         }
 

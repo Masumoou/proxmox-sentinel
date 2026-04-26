@@ -5,9 +5,9 @@ use anyhow::Result;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-mod alerts;
 mod alert_channels;
 mod alert_rules;
+mod alerts;
 mod cli;
 mod cluster;
 mod collectors;

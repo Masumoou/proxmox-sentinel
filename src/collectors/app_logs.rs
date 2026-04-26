@@ -1,6 +1,7 @@
 use crate::alerts::{Alert, AlertDispatcher};
 use crate::config::{AppLogsConfig, Config};
-use notify::{RecursiveMode, Watcher, RecommendedWatcher, Config as NotifyConfig};
+use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
+use regex::Regex;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -10,17 +11,21 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Duration;
 use tracing::{info, warn};
-use regex::Regex;
 
 pub async fn run_collector(
     cfg: AppLogsConfig,
     full_cfg: Arc<Config>,
-    mut dispatcher: AlertDispatcher,   // renamed, no underscore
+    mut dispatcher: AlertDispatcher, // renamed, no underscore
     ws_tx: broadcast::Sender<String>,
 ) {
-    if !cfg.enabled { return; }
+    if !cfg.enabled {
+        return;
+    }
 
-    info!("Starting App Logs collector: {} ({})", cfg.name, cfg.log_file_path);
+    info!(
+        "Starting App Logs collector: {} ({})",
+        cfg.name, cfg.log_file_path
+    );
 
     let stats = Arc::new(Mutex::new(LogStats::new()));
 
@@ -28,12 +33,16 @@ pub async fn run_collector(
     let (notify_tx, mut notify_rx) = mpsc::channel::<notify::Result<notify::Event>>(32);
 
     let mut watcher = RecommendedWatcher::new(
-        move |res| { let _ = notify_tx.blocking_send(res); },
-        NotifyConfig::default()
-    ).expect("Failed to create watcher");
+        move |res| {
+            let _ = notify_tx.blocking_send(res);
+        },
+        NotifyConfig::default(),
+    )
+    .expect("Failed to create watcher");
 
-    watcher.watch(Path::new(&cfg.log_file_path), RecursiveMode::NonRecursive)
-           .expect("Failed to watch log file");
+    watcher
+        .watch(Path::new(&cfg.log_file_path), RecursiveMode::NonRecursive)
+        .expect("Failed to watch log file");
 
     let mut last_offset = match File::open(&cfg.log_file_path) {
         Ok(f) => f.metadata().unwrap().len(),
@@ -101,19 +110,33 @@ impl LogStats {
     fn add_request(&mut self, is_error: bool, is_auth_fail: bool) {
         let now = chrono::Utc::now().timestamp() as u64;
         self.request_ts.push_back(now);
-        if is_error { self.error_ts.push_back(now); }
-        if is_auth_fail { self.auth_ts.push_back(now); }
+        if is_error {
+            self.error_ts.push_back(now);
+        }
+        if is_auth_fail {
+            self.auth_ts.push_back(now);
+        }
     }
 
     fn get_and_reset(&mut self) -> (usize, usize, usize) {
         let now = chrono::Utc::now().timestamp() as u64;
         let cut_off = now.saturating_sub(60);
-        
-        while self.request_ts.front().map_or(false, |&t| t < cut_off) { self.request_ts.pop_front(); }
-        while self.error_ts.front().map_or(false, |&t| t < cut_off) { self.error_ts.pop_front(); }
-        while self.auth_ts.front().map_or(false, |&t| t < cut_off) { self.auth_ts.pop_front(); }
-        
-        (self.request_ts.len(), self.error_ts.len(), self.auth_ts.len())
+
+        while self.request_ts.front().map_or(false, |&t| t < cut_off) {
+            self.request_ts.pop_front();
+        }
+        while self.error_ts.front().map_or(false, |&t| t < cut_off) {
+            self.error_ts.pop_front();
+        }
+        while self.auth_ts.front().map_or(false, |&t| t < cut_off) {
+            self.auth_ts.pop_front();
+        }
+
+        (
+            self.request_ts.len(),
+            self.error_ts.len(),
+            self.auth_ts.len(),
+        )
     }
 }
 
@@ -126,20 +149,20 @@ fn process_new_lines(
 ) -> anyhow::Result<()> {
     let mut file = File::open(&cfg.log_file_path)?;
     let metadata = file.metadata()?;
-    
+
     if metadata.len() < *offset {
         *offset = 0; // Truncated
     }
 
     file.seek(SeekFrom::Start(*offset))?;
     let reader = BufReader::new(file);
-    
+
     for line_res in reader.lines() {
         if let Ok(line) = line_res {
             parse_and_broadcast(cfg, &line, stats, ws_tx, regex);
         }
     }
-    
+
     *offset = metadata.len();
     Ok(())
 }
@@ -162,12 +185,22 @@ fn parse_and_broadcast(
                 let msg = val.get("message").and_then(|m| m.as_str()).unwrap_or("");
                 let app = val.get("app").and_then(|a| a.as_str()).unwrap_or("");
                 let l = val.get("level").and_then(|l| l.as_u64()).unwrap_or(1);
-                
-                level = if l >= 3 { 3 } else if l >= 2 { 2 } else { 1 };
-                if level >= 2 { is_error = true; }
+
+                level = if l >= 3 {
+                    3
+                } else if l >= 2 {
+                    2
+                } else {
+                    1
+                };
+                if level >= 2 {
+                    is_error = true;
+                }
 
                 // Auth failures
-                if (level >= 2 && msg.contains("Login failed")) || (app == "core" && msg.contains("Invalid credentials")) {
+                if (level >= 2 && msg.contains("Login failed"))
+                    || (app == "core" && msg.contains("Invalid credentials"))
+                {
                     is_auth_fail = true;
                 }
 
@@ -179,17 +212,28 @@ fn parse_and_broadcast(
 
                 event_data.insert("message".to_string(), serde_json::json!(msg));
                 event_data.insert("app".to_string(), serde_json::json!(app));
-                event_data.insert("remoteAddr".to_string(), val.get("remoteAddr").cloned().unwrap_or(Value::Null));
+                event_data.insert(
+                    "remoteAddr".to_string(),
+                    val.get("remoteAddr").cloned().unwrap_or(Value::Null),
+                );
             }
-        },
+        }
         "nginx_combined" | "apache_combined" => {
             if let Some(re) = regex {
                 if let Some(caps) = re.captures(line) {
                     let status_str = caps.name("status").map(|m| m.as_str()).unwrap_or("200");
                     let status = status_str.parse::<u32>().unwrap_or(200);
-                    
-                    level = if status >= 500 { 3 } else if status >= 400 { 2 } else { 1 };
-                    if level >= 2 { is_error = true; }
+
+                    level = if status >= 500 {
+                        3
+                    } else if status >= 400 {
+                        2
+                    } else {
+                        1
+                    };
+                    if level >= 2 {
+                        is_error = true;
+                    }
 
                     for name in re.capture_names().flatten() {
                         if let Some(m) = caps.name(name) {
@@ -198,7 +242,7 @@ fn parse_and_broadcast(
                     }
                 }
             }
-        },
+        }
         _ => {}
     }
 

@@ -41,9 +41,11 @@ pub async fn run_collector(cfg: PostgresConfig, mut dispatcher: AlertDispatcher)
                     Ok(row) => {
                         let conns: i64 = row.get("conn_count");
                         let _latency: Option<f64> = row.get("avg_latency_ms");
-                        
+
                         let duration = start.elapsed().as_secs_f64() * 1000.0;
-                        crate::exporter::prometheus::update_postgres(&cfg.name, true, conns, duration);
+                        crate::exporter::prometheus::update_postgres(
+                            &cfg.name, true, conns, duration,
+                        );
                     }
                     Err(e) => {
                         warn!("Postgres stats query error: {}", e);

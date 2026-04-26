@@ -102,29 +102,29 @@ pub struct HaproxyStats {
 
 // These are the column positions in HAProxy's CSV output.
 // Reference: https://www.haproxy.com/documentation/haproxy-stats-api
-const COL_PXNAME: usize = 0;      // proxy name
-const COL_SVNAME: usize = 1;      // service name (FRONTEND/BACKEND/server)
-const COL_QCUR: usize = 2;        // current queued requests
-const COL_SCUR: usize = 4;        // current sessions
-const COL_SMAX: usize = 5;        // max sessions
-const COL_SLIM: usize = 6;        // session limit
-const COL_STOT: usize = 7;        // total sessions
-const COL_BIN: usize = 8;         // bytes in
-const COL_BOUT: usize = 9;        // bytes out
-const COL_ECON: usize = 13;       // connection errors
-const COL_ERESP: usize = 14;      // response errors
-const COL_STATUS: usize = 17;     // status (UP/DOWN/OPEN...)
-const COL_WEIGHT: usize = 18;     // server weight
-const COL_ACT: usize = 19;        // active (1) or backup (0)
-const COL_DOWNTIME: usize = 24;   // total downtime (s)
-const COL_RATE: usize = 33;       // session rate
-const COL_HRSP_2XX: usize = 40;   // HTTP 2xx responses
-const COL_HRSP_4XX: usize = 42;   // HTTP 4xx responses
-const COL_HRSP_5XX: usize = 43;   // HTTP 5xx responses
+const COL_PXNAME: usize = 0; // proxy name
+const COL_SVNAME: usize = 1; // service name (FRONTEND/BACKEND/server)
+const COL_QCUR: usize = 2; // current queued requests
+const COL_SCUR: usize = 4; // current sessions
+const COL_SMAX: usize = 5; // max sessions
+const COL_SLIM: usize = 6; // session limit
+const COL_STOT: usize = 7; // total sessions
+const COL_BIN: usize = 8; // bytes in
+const COL_BOUT: usize = 9; // bytes out
+const COL_ECON: usize = 13; // connection errors
+const COL_ERESP: usize = 14; // response errors
+const COL_STATUS: usize = 17; // status (UP/DOWN/OPEN...)
+const COL_WEIGHT: usize = 18; // server weight
+const COL_ACT: usize = 19; // active (1) or backup (0)
+const COL_DOWNTIME: usize = 24; // total downtime (s)
+const COL_RATE: usize = 33; // session rate
+const COL_HRSP_2XX: usize = 40; // HTTP 2xx responses
+const COL_HRSP_4XX: usize = 42; // HTTP 4xx responses
+const COL_HRSP_5XX: usize = 43; // HTTP 5xx responses
 const COL_CHECK_STATUS: usize = 36; // health check status
-const COL_CHECK_DOWNS: usize = 22;  // number of UP->DOWN transitions
-const COL_LASTCHG: usize = 23;    // last status change (seconds)
-const COL_TYPE: usize = 32;       // 0=FE, 1=BE, 2=server, 3=listener
+const COL_CHECK_DOWNS: usize = 22; // number of UP->DOWN transitions
+const COL_LASTCHG: usize = 23; // last status change (seconds)
+const COL_TYPE: usize = 32; // 0=FE, 1=BE, 2=server, 3=listener
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Collector
@@ -137,8 +137,7 @@ pub struct HaproxyCollector {
 
 impl HaproxyCollector {
     pub fn new(cfg: &HaproxyConfig) -> Result<Self> {
-        let builder = Client::builder()
-            .timeout(Duration::from_secs(10));
+        let builder = Client::builder().timeout(Duration::from_secs(10));
 
         // Add basic auth via the URL or header
         if let Some(ref auth) = cfg.auth {
@@ -268,7 +267,10 @@ impl HaproxyCollector {
 
         let proxies: Vec<HaproxyProxy> = proxy_map.into_values().collect();
         let total_frontends = proxies.iter().filter(|p| p.frontend.is_some()).count();
-        let total_backends = proxies.iter().filter(|p| p.backend_summary.is_some()).count();
+        let total_backends = proxies
+            .iter()
+            .filter(|p| p.backend_summary.is_some())
+            .count();
 
         Ok(HaproxyStats {
             proxies,

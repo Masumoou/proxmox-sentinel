@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.13
+
+- Re-ran repository-wide Rust formatting so the public CI release checks pass cleanly.
+- Supersedes v0.2.12, whose GitHub Actions run stopped at `cargo fmt --check`.
+
 ## v0.2.12
 
 - Added shared custom alert rule evaluator state across node, guest, storage, LXC, and VM service checks.

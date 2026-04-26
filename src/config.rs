@@ -76,10 +76,14 @@ impl Config {
             anyhow::bail!("disk_threshold must be between 0 and 100");
         }
         if self.intelligence.enabled {
-            if self.intelligence.critical_mem_pct <= 0.0 || self.intelligence.critical_mem_pct > 100.0 {
+            if self.intelligence.critical_mem_pct <= 0.0
+                || self.intelligence.critical_mem_pct > 100.0
+            {
                 anyhow::bail!("intelligence.critical_mem_pct must be between 0 and 100");
             }
-            if self.intelligence.target_free_mem_pct <= 0.0 || self.intelligence.target_free_mem_pct > 100.0 {
+            if self.intelligence.target_free_mem_pct <= 0.0
+                || self.intelligence.target_free_mem_pct > 100.0
+            {
                 anyhow::bail!("intelligence.target_free_mem_pct must be between 0 and 100");
             }
         }
@@ -314,33 +318,72 @@ impl PlatformConfig {
     pub fn validate(&self) -> Result<()> {
         validate_pct("platform.zfs_usage_threshold", self.zfs_usage_threshold)?;
         validate_pct("platform.lvmthin_data_warn_pct", self.lvmthin_data_warn_pct)?;
-        validate_pct("platform.lvmthin_data_critical_pct", self.lvmthin_data_critical_pct)?;
-        validate_pct("platform.lvmthin_metadata_warn_pct", self.lvmthin_metadata_warn_pct)?;
-        validate_pct("platform.lvmthin_metadata_critical_pct", self.lvmthin_metadata_critical_pct)?;
+        validate_pct(
+            "platform.lvmthin_data_critical_pct",
+            self.lvmthin_data_critical_pct,
+        )?;
+        validate_pct(
+            "platform.lvmthin_metadata_warn_pct",
+            self.lvmthin_metadata_warn_pct,
+        )?;
+        validate_pct(
+            "platform.lvmthin_metadata_critical_pct",
+            self.lvmthin_metadata_critical_pct,
+        )?;
         if self.lvmthin_data_warn_pct > self.lvmthin_data_critical_pct {
             anyhow::bail!("platform.lvmthin_data_warn_pct must be <= lvmthin_data_critical_pct");
         }
         if self.lvmthin_metadata_warn_pct > self.lvmthin_metadata_critical_pct {
-            anyhow::bail!("platform.lvmthin_metadata_warn_pct must be <= lvmthin_metadata_critical_pct");
+            anyhow::bail!(
+                "platform.lvmthin_metadata_warn_pct must be <= lvmthin_metadata_critical_pct"
+            );
         }
         Ok(())
     }
 }
 
-fn default_platform_enabled() -> bool { true }
-fn default_platform_interval() -> u64 { 60 }
-fn default_true() -> bool { true }
-fn default_backup_warn_hours() -> u64 { 48 }
-fn default_backup_critical_hours() -> u64 { 72 }
-fn default_task_long_running_minutes() -> u64 { 60 }
-fn default_snapshot_warn_days() -> u64 { 7 }
-fn default_snapshot_max_count() -> usize { 5 }
-fn default_zfs_usage_threshold() -> f64 { 80.0 }
-fn default_lvmthin_data_warn_pct() -> f64 { 85.0 }
-fn default_lvmthin_data_critical_pct() -> f64 { 95.0 }
-fn default_lvmthin_metadata_warn_pct() -> f64 { 75.0 }
-fn default_lvmthin_metadata_critical_pct() -> f64 { 90.0 }
-fn default_security_enabled() -> bool { true }
+fn default_platform_enabled() -> bool {
+    true
+}
+fn default_platform_interval() -> u64 {
+    60
+}
+fn default_true() -> bool {
+    true
+}
+fn default_backup_warn_hours() -> u64 {
+    48
+}
+fn default_backup_critical_hours() -> u64 {
+    72
+}
+fn default_task_long_running_minutes() -> u64 {
+    60
+}
+fn default_snapshot_warn_days() -> u64 {
+    7
+}
+fn default_snapshot_max_count() -> usize {
+    5
+}
+fn default_zfs_usage_threshold() -> f64 {
+    80.0
+}
+fn default_lvmthin_data_warn_pct() -> f64 {
+    85.0
+}
+fn default_lvmthin_data_critical_pct() -> f64 {
+    95.0
+}
+fn default_lvmthin_metadata_warn_pct() -> f64 {
+    75.0
+}
+fn default_lvmthin_metadata_critical_pct() -> f64 {
+    90.0
+}
+fn default_security_enabled() -> bool {
+    true
+}
 
 fn validate_pct(name: &str, value: f64) -> Result<()> {
     if !(0.0..=100.0).contains(&value) {
@@ -384,7 +427,11 @@ impl Default for BackupPolicyConfig {
             critical_hours: default_backup_critical_hours(),
             exclude_vmids: vec![],
             include_tags: vec![],
-            exclude_tags: vec!["nobackup".to_string(), "test".to_string(), "template".to_string()],
+            exclude_tags: vec![
+                "nobackup".to_string(),
+                "test".to_string(),
+                "template".to_string(),
+            ],
             tag_rules: vec![
                 BackupTagRule {
                     tag: "critical".to_string(),
@@ -419,10 +466,15 @@ impl BackupPolicyConfig {
         }
         for rule in &self.tag_rules {
             if rule.warn_hours == 0 || rule.critical_hours == 0 {
-                anyhow::bail!("backup_policy.tag_rules warn_hours/critical_hours must be greater than 0");
+                anyhow::bail!(
+                    "backup_policy.tag_rules warn_hours/critical_hours must be greater than 0"
+                );
             }
             if rule.warn_hours > rule.critical_hours {
-                anyhow::bail!("backup_policy tag rule '{}' warn_hours must be <= critical_hours", rule.tag);
+                anyhow::bail!(
+                    "backup_policy tag rule '{}' warn_hours must be <= critical_hours",
+                    rule.tag
+                );
             }
         }
         Ok(())
@@ -476,8 +528,15 @@ impl AlertRuleConfig {
             anyhow::bail!("alert_rules entry has empty name");
         }
         let target = self.target.to_lowercase();
-        if !matches!(target.as_str(), "node" | "vm" | "lxc" | "guest" | "service" | "storage") {
-            anyhow::bail!("alert_rules.{} target '{}' is unsupported", self.name, self.target);
+        if !matches!(
+            target.as_str(),
+            "node" | "vm" | "lxc" | "guest" | "service" | "storage"
+        ) {
+            anyhow::bail!(
+                "alert_rules.{} target '{}' is unsupported",
+                self.name,
+                self.target
+            );
         }
         if matches!(target.as_str(), "vm" | "lxc" | "guest") && self.metric.is_none() {
             anyhow::bail!("alert_rules.{} requires metric", self.name);
@@ -501,7 +560,11 @@ impl AlertRuleConfig {
                     | "activating"
                     | "unknown"
             ) {
-                anyhow::bail!("alert_rules.{} condition '{}' is unsupported", self.name, condition);
+                anyhow::bail!(
+                    "alert_rules.{} condition '{}' is unsupported",
+                    self.name,
+                    condition
+                );
             }
         }
         if let Some(op) = self.operator.as_deref() {
@@ -513,7 +576,9 @@ impl AlertRuleConfig {
     }
 }
 
-fn default_alert_rule_duration() -> u64 { 60 }
+fn default_alert_rule_duration() -> u64 {
+    60
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CertificateConfig {
@@ -535,8 +600,12 @@ impl Default for CertificateConfig {
     }
 }
 
-fn default_cert_warn_days() -> u64 { 30 }
-fn default_cert_critical_days() -> u64 { 7 }
+fn default_cert_warn_days() -> u64 {
+    30
+}
+fn default_cert_critical_days() -> u64 {
+    7
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CertificateTarget {
@@ -688,8 +757,12 @@ impl Default for ServicesConfig {
     }
 }
 
-fn default_service_auto_discovery() -> bool { true }
-fn default_alert_on_discovered_services() -> bool { true }
+fn default_service_auto_discovery() -> bool {
+    true
+}
+fn default_alert_on_discovered_services() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LxcServiceChecks {
@@ -821,8 +894,12 @@ impl Default for IntelligenceConfig {
     }
 }
 
-fn default_critical_mem_pct() -> f64 { 95.0 }
-fn default_target_free_mem_pct() -> f64 { 30.0 }
+fn default_critical_mem_pct() -> f64 {
+    95.0
+}
+fn default_target_free_mem_pct() -> f64 {
+    30.0
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // File Activity Config
@@ -862,11 +939,11 @@ fn default_activity_regex() -> String {
 pub struct AppMetricsConfig {
     #[serde(default)]
     pub enabled: bool,
-    pub name: String,                    // display name, e.g. "nextcloud"
-    pub kind: String,                    // "nextcloud_occ" | "http_json" | "shell_json"
-    pub target_vmid: Option<u32>,        // LXC/VM vmid to exec into (for occ/shell)
-    pub command: Option<String>,         // shell command to run inside the VM
-    pub endpoint_url: Option<String>,    // HTTP endpoint for http_json kind
+    pub name: String,                              // display name, e.g. "nextcloud"
+    pub kind: String,                              // "nextcloud_occ" | "http_json" | "shell_json"
+    pub target_vmid: Option<u32>,                  // LXC/VM vmid to exec into (for occ/shell)
+    pub command: Option<String>,                   // shell command to run inside the VM
+    pub endpoint_url: Option<String>,              // HTTP endpoint for http_json kind
     pub json_path_mappings: Vec<AppMetricMapping>, // map JSON paths to metric names
     #[serde(default = "default_app_interval")]
     pub interval_secs: u64,
@@ -874,12 +951,12 @@ pub struct AppMetricsConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppMetricMapping {
-    pub json_path: String,    // e.g. "ocs.data.activeUsers.last5minutes"
-    pub metric_name: String,  // e.g. "active_users_5min"
+    pub json_path: String,   // e.g. "ocs.data.activeUsers.last5minutes"
+    pub metric_name: String, // e.g. "active_users_5min"
     #[allow(dead_code)]
-    pub metric_type: String,  // "gauge" | "counter" | "info"
-    pub label: String,        // display label in UI
-    pub unit: String,         // "users" | "files" | "bytes" | "ms" | ""
+    pub metric_type: String, // "gauge" | "counter" | "info"
+    pub label: String,       // display label in UI
+    pub unit: String,        // "users" | "files" | "bytes" | "ms" | ""
 }
 
 impl Default for AppMetricsConfig {
@@ -897,7 +974,9 @@ impl Default for AppMetricsConfig {
     }
 }
 
-fn default_app_interval() -> u64 { 60 }
+fn default_app_interval() -> u64 {
+    60
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // App Logs Config
@@ -908,10 +987,10 @@ pub struct AppLogsConfig {
     #[serde(default)]
     pub enabled: bool,
     pub name: String,
-    pub log_file_path: String,     // host path or pct exec path
+    pub log_file_path: String, // host path or pct exec path
     #[allow(dead_code)]
-    pub target_vmid: Option<u32>,  // if inside a container/VM
-    pub log_format: String,        // "nextcloud_json" | "nginx_combined" | "apache_combined"
+    pub target_vmid: Option<u32>, // if inside a container/VM
+    pub log_format: String,    // "nextcloud_json" | "nginx_combined" | "apache_combined"
     #[allow(dead_code)]
     pub slow_request_threshold_ms: u64,
 }
@@ -928,4 +1007,3 @@ impl Default for AppLogsConfig {
         }
     }
 }
-
