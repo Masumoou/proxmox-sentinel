@@ -319,10 +319,12 @@ Sentinel uses Proxmox's method map correctly: `POST` for `/agent/ping` and `/age
 Guest exec uses the Proxmox-supported JSON array form:
 
 ```json
-{"command":["/bin/sh","-lc","systemctl list-units --type=service --all --no-pager --no-legend --plain"]}
+{"command":["/bin/sh","-lc","(systemctl list-units --type=service --all --no-pager --no-legend --plain; systemctl list-units --type=service --state=running --no-pager --no-legend --plain; systemctl --failed --type=service --no-pager --no-legend --plain)"]}
 ```
 
 If guest exec fails, Sentinel keeps `agent=true` when ping/native endpoints still work, keeps showing OS/IP/mounts, logs `guest-agent exec_error`, and reports zero services until the exec permission or command issue is fixed.
+
+Service discovery collects all units reported by the guest, not a hardcoded list. Each service keeps its name, load state, active state, sub-state, description, running/failed flags, display classification, and listening ports when `ss -lntup` is available. Classification is only used to sort the compact dashboard preview so failed services and application services such as `apache2`, `php8.3-fpm`, `postgresql`, `redis`, `haproxy`, and `ssh` appear before noisy system units. The full guest detail table keeps every discovered service.
 
 The daemon still runs as root on the Proxmox host for local cgroup, LXC, and log access.
 
@@ -421,7 +423,18 @@ missing
 running
 ```
 
-`down` remains backward compatible and means the service is missing or not running.
+`down` remains backward compatible and means the service is missing or not running. Service rules can target any discovered service, for example `php8.3-fpm` on one VM:
+
+```toml
+[[alert_rules]]
+name = "vm-104-php-fpm-down"
+target = "service"
+vmid = 104
+service = "php8.3-fpm"
+condition = "down"
+duration_secs = 60
+severity = "critical"
+```
 
 ### Backup Policy
 
@@ -536,7 +549,8 @@ Collected from the Proxmox host:
 - cgroup memory stats
 - I/O stats
 - PID count
-- service list through `pct exec <vmid> -- systemctl`
+- full service inventory through `pct exec <vmid> -- systemctl`, including all, running, and failed service views
+- listening ports from `ss -lntup` when available
 - disk mounts through `pct exec <vmid> -- df`
 - OS and OS version from container `/etc/os-release`
 - log files from `/var/lib/lxc/<vmid>/rootfs/var/log`
@@ -561,11 +575,12 @@ Available when QEMU Guest Agent responds:
 - IP addresses
 - OS information where exposed
 - filesystem/mount details
-- guest command execution for service and process checks
+- guest command execution for full service inventory, failed service checks, listening ports, and process checks
 
 Available when SSH fallback is configured:
 
-- services from `systemctl`
+- full service inventory from `systemctl`
+- listening ports from `ss -lntup`
 - OS and version from `/etc/os-release`
 - disk mounts from `df`
 - selected logs

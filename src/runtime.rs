@@ -416,30 +416,33 @@ pub async fn run(cfg: Config) -> Result<()> {
                             .map(|(name, _)| name.clone())
                             .collect();
 
-                        let should_show_service = |name: &str| {
-                            if cfg_inner.services.auto_discover {
-                                return true;
-                            }
-                            tracked_services
-                                .map(|tracked| {
-                                    let short = normalize_service_name(name);
-                                    tracked.checks.contains(&name.to_string())
-                                        || tracked.checks.contains(&short)
-                                })
-                                .unwrap_or(false)
-                        };
-
+                        let service_running = stats.services.iter().filter(|s| s.running).count();
+                        let service_failed = stats.services.iter().filter(|s| s.failed).count();
                         let svcs: Vec<serde_json::Value> = stats
                             .services
                             .iter()
-                            .filter(|s| should_show_service(&s.name))
                             .map(|s| {
-                                let is_active = service_is_healthy(&s.state, &s.sub_state);
                                 json!({
                                     "name": normalize_service_name(&s.name),
-                                    "status": if is_active { "running" } else { "failed" },
+                                    "status": if s.running {
+                                        "running"
+                                    } else if s.failed {
+                                        "failed"
+                                    } else if s.load == "not-found" {
+                                        "not-found"
+                                    } else if service_is_healthy(&s.state, &s.sub_state) {
+                                        "running"
+                                    } else {
+                                        s.sub_state.as_str()
+                                    },
+                                    "load": s.load.as_str(),
                                     "state": s.state.as_str(),
-                                    "sub_state": s.sub_state.as_str()
+                                    "sub_state": s.sub_state.as_str(),
+                                    "description": s.description.as_str(),
+                                    "classification": s.classification.as_str(),
+                                    "running": s.running,
+                                    "failed": s.failed,
+                                    "ports": &s.ports
                                 })
                             })
                             .collect();
@@ -516,6 +519,9 @@ pub async fn run(cfg: Config) -> Result<()> {
                             "os_name": stats.os_name.clone(),
                             "os_version": stats.os_version.clone(),
                             "services": svcs,
+                            "service_total": stats.services.len(),
+                            "service_running": service_running,
+                            "service_failed": service_failed,
                             "disk_mounts": disks,
                             "mem_current": stats.cgroup.mem_current,
                             "mem_limit": stats.cgroup.mem_limit,
@@ -628,6 +634,9 @@ pub async fn run(cfg: Config) -> Result<()> {
                             .map(|(name, _)| name.clone())
                             .collect();
 
+                        let service_running =
+                            vm_stats.services.iter().filter(|s| s.running).count();
+                        let service_failed = vm_stats.services.iter().filter(|s| s.failed).count();
                         let svcs: Vec<serde_json::Value> = vm_stats
                             .services
                             .iter()
@@ -639,8 +648,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                                     "sub_state": s.sub_state.as_str(),
                                     "load": s.load.as_str(),
                                     "description": s.description.as_str(),
+                                    "classification": s.classification.as_str(),
                                     "running": s.running,
-                                    "failed": s.failed
+                                    "failed": s.failed,
+                                    "ports": &s.ports
                                 })
                             })
                             .collect();
@@ -724,6 +735,9 @@ pub async fn run(cfg: Config) -> Result<()> {
                             "os_name": vm_stats.os_name.clone(),
                             "os_version": vm_stats.os_version.clone(),
                             "services": svcs,
+                            "service_total": vm_stats.services.len(),
+                            "service_running": service_running,
+                            "service_failed": service_failed,
                             "disk_mounts": disks,
                             "agent": vm_stats.agent_available,
                             "ssh": vm_stats.ssh_available,

@@ -15,8 +15,14 @@ export interface NodeData {
 export interface ServiceData {
   name: string;
   status: string;
+  load?: string;
   state?: string;
   sub_state?: string;
+  description?: string;
+  classification?: string;
+  running?: boolean;
+  failed?: boolean;
+  ports?: string[];
 }
 
 export interface DiskMount {
@@ -45,6 +51,9 @@ export interface GuestData {
 
 export interface GuestDetail {
   services?: ServiceData[];
+  service_total?: number;
+  service_running?: number;
+  service_failed?: number;
   disk_mounts?: DiskMount[];
   agent?: boolean;
   ssh?: boolean;
@@ -107,9 +116,15 @@ let started = false;
 export const enrichedGuests = derived([guests, detailMap], ([$guests, $detailMap]) =>
   $guests.map((guest) => {
     const detail = $detailMap[guest.vmid] || {};
+    const services = detail.services || [];
+    const runningServices = detail.service_running ?? services.filter(isServiceRunning).length;
+    const failedServices = detail.service_failed ?? services.filter(isServiceFailed).length;
     return {
       ...guest,
-      services: detail.services || [],
+      services,
+      service_total: detail.service_total ?? services.length,
+      service_running: runningServices,
+      service_failed: failedServices,
       disk_mounts: detail.disk_mounts || [],
       agent: detail.agent,
       ssh: detail.ssh,
@@ -186,6 +201,9 @@ function handleMessage(payload: any) {
   if (payload.type === 'lxc_detail') {
     mergeDetails(payload.lxc || [], (item) => ({
       services: item.services || [],
+      service_total: item.service_total,
+      service_running: item.service_running,
+      service_failed: item.service_failed,
       disk_mounts: item.disk_mounts || [],
       os_name: item.os_name,
       os_version: item.os_version,
@@ -202,6 +220,9 @@ function handleMessage(payload: any) {
   if (payload.type === 'vm_detail') {
     mergeDetails(payload.vms || [], (item) => ({
       services: item.services || [],
+      service_total: item.service_total,
+      service_running: item.service_running,
+      service_failed: item.service_failed,
       disk_mounts: item.disk_mounts || [],
       agent: item.agent,
       ssh: item.ssh,
@@ -295,6 +316,111 @@ export function clearLogs() {
 
 export function clearSecurityEvents() {
   securityEvents.set([]);
+}
+
+const APPLICATION_CLASSES = new Set(['web', 'php', 'database', 'container', 'proxy/lb', 'monitoring']);
+const IMPORTANT_SERVICE_ORDER = [
+  'apache2',
+  'nginx',
+  'caddy',
+  'traefik',
+  'php8.3-fpm',
+  'php8.2-fpm',
+  'php8.1-fpm',
+  'php-fpm',
+  'postgresql',
+  'mariadb',
+  'mysql',
+  'redis',
+  'redis-server',
+  'mongodb',
+  'mongod',
+  'haproxy',
+  'keepalived',
+  'docker',
+  'containerd',
+  'podman',
+  'ssh',
+  'sshd',
+];
+
+export function normalizeServiceName(name: string): string {
+  return String(name || '')
+    .trim()
+    .replace(/\.service$/i, '')
+    .toLowerCase();
+}
+
+export function isServiceRunning(service: ServiceData): boolean {
+  if (typeof service.running === 'boolean') return service.running;
+  const status = String(service.status || '').toLowerCase();
+  const active = String(service.state || '').toLowerCase();
+  const sub = String(service.sub_state || '').toLowerCase();
+  return status === 'running' || (active === 'active' && sub === 'running');
+}
+
+export function isServiceFailed(service: ServiceData): boolean {
+  if (typeof service.failed === 'boolean') return service.failed;
+  const status = String(service.status || '').toLowerCase();
+  const active = String(service.state || '').toLowerCase();
+  const sub = String(service.sub_state || '').toLowerCase();
+  return status === 'failed' || active === 'failed' || sub === 'failed';
+}
+
+export function serviceClassification(service: ServiceData): string {
+  const existing = String(service.classification || '').toLowerCase();
+  if (existing) return existing;
+  const name = normalizeServiceName(service.name);
+  if (['apache2', 'nginx', 'caddy', 'traefik'].includes(name)) return 'web';
+  if (name.startsWith('php') && name.includes('fpm')) return 'php';
+  if (['mysql', 'mariadb', 'postgresql', 'redis', 'redis-server', 'mongodb', 'mongod'].includes(name)) return 'database';
+  if (['docker', 'containerd', 'podman'].includes(name)) return 'container';
+  if (['haproxy', 'keepalived'].includes(name)) return 'proxy/lb';
+  if (['prometheus', 'grafana', 'node_exporter', 'node-exporter', 'zabbix-agent'].includes(name)) return 'monitoring';
+  if (name.startsWith('systemd-') || ['dbus', 'cron', 'rsyslog', 'qemu-guest-agent'].includes(name)) return 'system';
+  return 'other';
+}
+
+export function isApplicationService(service: ServiceData): boolean {
+  return APPLICATION_CLASSES.has(serviceClassification(service));
+}
+
+function importantServiceIndex(service: ServiceData): number {
+  const name = normalizeServiceName(service.name);
+  const exact = IMPORTANT_SERVICE_ORDER.indexOf(name);
+  if (exact >= 0) return exact;
+  if (/^php\d+(\.\d+)?-fpm$/.test(name)) return IMPORTANT_SERVICE_ORDER.indexOf('php8.3-fpm');
+  return -1;
+}
+
+export function servicePriority(service: ServiceData): number {
+  if (isServiceFailed(service)) return 0;
+  const important = importantServiceIndex(service);
+  if (isServiceRunning(service) && important >= 0) return 10 + important;
+  if (isServiceRunning(service) && isApplicationService(service)) return 50;
+  if (important >= 0) return 70 + important;
+  if (isServiceRunning(service) && serviceClassification(service) !== 'system') return 100;
+  if (isServiceRunning(service)) return 130;
+  return 180;
+}
+
+export function sortedServices(services: ServiceData[]): ServiceData[] {
+  return [...(services || [])].sort((a, b) => {
+    const priority = servicePriority(a) - servicePriority(b);
+    if (priority !== 0) return priority;
+    return normalizeServiceName(a.name).localeCompare(normalizeServiceName(b.name));
+  });
+}
+
+export function previewServices(services: ServiceData[], limit = 8): ServiceData[] {
+  return sortedServices(services).slice(0, limit);
+}
+
+export function serviceDisplayStatus(service: ServiceData): string {
+  if (isServiceFailed(service)) return 'failed';
+  if (isServiceRunning(service)) return 'running';
+  if (service.load === 'not-found') return 'not-found';
+  return service.sub_state || service.status || service.state || 'unknown';
 }
 
 export function formatBytes(bytes: number, decimals = 1): string {

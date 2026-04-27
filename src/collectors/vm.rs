@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use ssh2::Session;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::net::TcpStream;
 use std::path::Path;
@@ -45,6 +46,8 @@ pub struct VmService {
     pub description: String,
     pub running: bool,
     pub failed: bool,
+    pub classification: String,
+    pub ports: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -220,13 +223,15 @@ impl<'a> VmCollector<'a> {
         let processes = parse_ps_output(&ps_json);
 
         // Service discovery through QEMU Guest Agent keeps VM monitoring agentless:
-        // no Sentinel sidecar inside the VM and no SSH key requirement.
+        // no Sentinel sidecar inside the VM and no SSH key requirement. Collect
+        // every unit, then collect running/failed views too so distro differences
+        // do not hide state.
         let svc_json = match self
             .client
             .vm_agent_exec_shell(
                 node,
                 vmid,
-                "systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null || rc-status --nocolor 2>/dev/null || true",
+                "(systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null; systemctl list-units --type=service --state=running --no-pager --no-legend --plain 2>/dev/null; systemctl --failed --type=service --no-pager --no-legend --plain 2>/dev/null) || rc-status --nocolor 2>/dev/null || true",
             )
             .await
         {
@@ -236,7 +241,22 @@ impl<'a> VmCollector<'a> {
                 String::new()
             }
         };
-        let services = parse_services_output(&svc_json);
+
+        let port_output = match self
+            .client
+            .vm_agent_exec_shell(node, vmid, "ss -lntup 2>/dev/null || true")
+            .await
+        {
+            Ok(output) => output,
+            Err(e) => {
+                warn!("VM {vmid} guest-agent exec_error ss: {e}");
+                String::new()
+            }
+        };
+        let services = attach_ports(
+            parse_services_output(&svc_json),
+            &parse_ss_output(&port_output),
+        );
 
         if os_name.is_none() || os_version.is_none() {
             let os_release = match self
@@ -426,11 +446,13 @@ fn ssh_collect(ip: &str, cfg: &SshConfig) -> Result<SshData> {
     // Services
     let svc_out = ssh_exec(
         &sess,
-        "systemctl list-units --type=service --no-pager --no-legend \
-         --output=json 2>/dev/null || systemctl list-units --type=service --no-pager --no-legend \
-         --plain 2>/dev/null || rc-status --nocolor 2>/dev/null",
+        "(systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null; \
+         systemctl list-units --type=service --state=running --no-pager --no-legend --plain 2>/dev/null; \
+         systemctl --failed --type=service --no-pager --no-legend --plain 2>/dev/null) \
+         || rc-status --nocolor 2>/dev/null",
     )?;
-    let services = parse_services_output(&svc_out);
+    let ports = ssh_exec(&sess, "ss -lntup 2>/dev/null || true").unwrap_or_default();
+    let services = attach_ports(parse_services_output(&svc_out), &parse_ss_output(&ports));
 
     let os_out = ssh_exec(&sess, "cat /etc/os-release 2>/dev/null || true")?;
     let (os_name, os_version) = parse_os_release(&os_out);
@@ -521,13 +543,13 @@ fn parse_ps_output(output: &str) -> Vec<VmProcess> {
 fn parse_services_output(output: &str) -> Vec<VmService> {
     let trimmed = output.trim_start();
     if trimmed.starts_with('[') {
-        return parse_systemctl_json(output);
+        return dedupe_services(parse_systemctl_json(output));
     }
     let systemd = parse_systemctl_plain(output);
     if !systemd.is_empty() {
-        return systemd;
+        return dedupe_services(systemd);
     }
-    parse_openrc_output(output)
+    dedupe_services(parse_openrc_output(output))
 }
 
 fn parse_os_release(output: &str) -> (Option<String>, Option<String>) {
@@ -624,6 +646,7 @@ fn vm_service_from_parts(
     let running = matches!(state.as_str(), "active" | "started")
         && matches!(sub_state.as_str(), "running" | "started" | "active");
     let failed = state == "failed" || sub_state == "failed";
+    let classification = classify_service(name);
 
     VmService {
         name: name.to_string(),
@@ -635,12 +658,183 @@ fn vm_service_from_parts(
         description: description.to_string(),
         running,
         failed,
+        classification,
+        ports: vec![],
     }
+}
+
+fn dedupe_services(services: Vec<VmService>) -> Vec<VmService> {
+    let mut map: BTreeMap<String, VmService> = BTreeMap::new();
+    for service in services {
+        let key = normalize_service_key(&service.name);
+        match map.get(&key) {
+            Some(existing) if service_rank(existing) <= service_rank(&service) => {}
+            _ => {
+                map.insert(key, service);
+            }
+        }
+    }
+    map.into_values().collect()
+}
+
+fn service_rank(service: &VmService) -> u8 {
+    if service.failed {
+        0
+    } else if service.running {
+        1
+    } else if service.state == "active" {
+        2
+    } else if service.state == "inactive" {
+        3
+    } else {
+        4
+    }
+}
+
+fn attach_ports(
+    mut services: Vec<VmService>,
+    ports: &HashMap<String, Vec<String>>,
+) -> Vec<VmService> {
+    for service in &mut services {
+        let mut found = ports_for_service(&service.name, ports);
+        sort_ports(&mut found);
+        found.dedup();
+        service.ports = found;
+    }
+    services
+}
+
+fn sort_ports(ports: &mut [String]) {
+    ports.sort_by(|a, b| {
+        let a_num = a.parse::<u16>();
+        let b_num = b.parse::<u16>();
+        match (a_num, b_num) {
+            (Ok(a), Ok(b)) => a.cmp(&b),
+            _ => a.cmp(b),
+        }
+    });
+}
+
+fn parse_ss_output(output: &str) -> HashMap<String, Vec<String>> {
+    let mut ports: HashMap<String, Vec<String>> = HashMap::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("Netid") {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        let Some(port) = extract_port(parts[4]) else {
+            continue;
+        };
+        let process_names = extract_process_names(line);
+        for process in process_names {
+            ports
+                .entry(normalize_service_key(&process))
+                .or_default()
+                .push(port.clone());
+        }
+    }
+    ports
+}
+
+fn extract_port(local_addr: &str) -> Option<String> {
+    let addr = local_addr.trim_matches('"');
+    let port = addr.rsplit_once(':')?.1.trim_end_matches(']').to_string();
+    if port.is_empty() || port == "*" {
+        None
+    } else {
+        Some(port)
+    }
+}
+
+fn extract_process_names(line: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("((\"") {
+        rest = &rest[start + 3..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        let name = &rest[..end];
+        if !name.is_empty() {
+            names.push(name.to_string());
+        }
+        rest = &rest[end + 1..];
+    }
+    names
+}
+
+fn ports_for_service(service_name: &str, ports: &HashMap<String, Vec<String>>) -> Vec<String> {
+    let mut found = Vec::new();
+    for key in service_process_keys(service_name) {
+        if let Some(values) = ports.get(&key) {
+            found.extend(values.iter().cloned());
+        }
+    }
+    found
+}
+
+fn service_process_keys(service_name: &str) -> Vec<String> {
+    let key = normalize_service_key(service_name);
+    let mut keys = vec![key.clone()];
+    if key == "ssh" {
+        keys.push("sshd".to_string());
+    }
+    if let Some(version) = key.strip_prefix("php").and_then(|s| s.strip_suffix("-fpm")) {
+        keys.push(normalize_service_key(&format!("php-fpm{version}")));
+    }
+    keys
+}
+
+fn classify_service(name: &str) -> String {
+    let key = normalize_service_key(name);
+    let class = if matches!(key.as_str(), "apache2" | "nginx" | "caddy" | "traefik") {
+        "web"
+    } else if key.starts_with("php") && key.contains("fpm") {
+        "php"
+    } else if matches!(
+        key.as_str(),
+        "mysql" | "mariadb" | "postgresql" | "redis" | "redis-server" | "mongodb" | "mongod"
+    ) {
+        "database"
+    } else if matches!(key.as_str(), "docker" | "containerd" | "podman") {
+        "container"
+    } else if matches!(key.as_str(), "haproxy" | "keepalived") {
+        "proxy/lb"
+    } else if matches!(
+        key.as_str(),
+        "prometheus" | "grafana" | "node_exporter" | "node-exporter" | "zabbix-agent"
+    ) {
+        "monitoring"
+    } else if key.starts_with("systemd-")
+        || matches!(
+            key.as_str(),
+            "dbus" | "cron" | "rsyslog" | "qemu-guest-agent"
+        )
+    {
+        "system"
+    } else {
+        "other"
+    };
+    class.to_string()
+}
+
+fn normalize_service_key(name: &str) -> String {
+    name.trim()
+        .trim_end_matches(".service")
+        .to_ascii_lowercase()
+        .replace('@', "-")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_openrc_output, parse_services_output, parse_systemctl_plain};
+    use super::{
+        attach_ports, parse_openrc_output, parse_services_output, parse_ss_output,
+        parse_systemctl_plain,
+    };
 
     #[test]
     fn parses_systemctl_json_services() {
@@ -713,6 +907,43 @@ mod tests {
         assert_eq!(apparmor.sub_state, "exited");
         assert!(!apparmor.running);
         assert!(!apparmor.failed);
+    }
+
+    #[test]
+    fn classifies_and_maps_ports_for_application_services() {
+        let services = parse_services_output(
+            "apache2.service loaded active running The Apache HTTP Server\n\
+             php8.3-fpm.service loaded active running The PHP 8.3 FastCGI Process Manager\n\
+             ssh.service loaded active running OpenBSD Secure Shell server\n\
+             systemd-journald.service loaded active running Journal Service\n",
+        );
+        let ports = parse_ss_output(
+            "tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:((\"apache2\",pid=123,fd=4))\n\
+             tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:* users:((\"apache2\",pid=124,fd=4))\n\
+             tcp LISTEN 0 128 127.0.0.1:9000 0.0.0.0:* users:((\"php-fpm8.3\",pid=456,fd=8))\n\
+             tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n",
+        );
+        let services = attach_ports(services, &ports);
+
+        let apache = services
+            .iter()
+            .find(|svc| svc.name == "apache2.service")
+            .unwrap();
+        assert_eq!(apache.classification, "web");
+        assert_eq!(apache.ports, vec!["80", "443"]);
+
+        let php = services
+            .iter()
+            .find(|svc| svc.name == "php8.3-fpm.service")
+            .unwrap();
+        assert_eq!(php.classification, "php");
+        assert_eq!(php.ports, vec!["9000"]);
+
+        let ssh = services
+            .iter()
+            .find(|svc| svc.name == "ssh.service")
+            .unwrap();
+        assert_eq!(ssh.ports, vec!["22"]);
     }
 
     #[test]

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.18
+
+- Expanded VM and LXC service collection to ingest all services plus running and failed service views instead of relying on compact previews or hardcoded service lists.
+- Added service classification and listening-port mapping for display so application services like `apache2`, `php8.3-fpm`, and `ssh` are prioritized ahead of noisy system units.
+- Sent full service state, counts, classifications, descriptions, and ports over VM/LXC detail WebSocket events.
+- Updated the dashboard guest inventory with running/total/failed counts, prioritized compact service chips, and a full service table with search and filters.
+
 ## v0.2.17
 
 - Fixed QEMU Guest Agent exec by sending Proxmox's required JSON array payload, parsing `pid`, polling `exec-status`, and honoring `exitcode`, `out-data`, and `err-data`.

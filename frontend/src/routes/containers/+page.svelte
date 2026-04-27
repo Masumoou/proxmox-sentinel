@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { enrichedGuests, formatBytes, pct, wsConnected } from '$lib/store';
+  import { enrichedGuests, formatBytes, isServiceFailed, isServiceRunning, pct, previewServices, wsConnected } from '$lib/store';
 
   let containers = $derived($enrichedGuests.filter((guest) => guest.type === 'LXC'));
 </script>
@@ -23,8 +23,8 @@
             <div><span>PIDS</span><strong>{ct.pids || '-'}</strong></div>
           </div>
           <div class="services">
-            {#each ct.services.slice(0, 10) as service}
-              <span class:down={service.status !== 'running'}>{service.name}</span>
+            {#each previewServices(ct.services, 10) as service}
+              <span class:down={isServiceFailed(service)} class:muted={!isServiceRunning(service) && !isServiceFailed(service)}>{service.name}</span>
             {:else}
               <em>No services discovered</em>
             {/each}
@@ -53,5 +53,6 @@
   .services { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
   .services span { color: var(--accent-green); border: 1px solid rgba(0,255,136,0.18); background: rgba(0,255,136,0.08); border-radius: 4px; padding: 3px 7px; font-size: 0.65rem; }
   .services span.down { color: var(--accent-red); border-color: rgba(255,51,85,0.22); background: rgba(255,51,85,0.08); }
+  .services span.muted { color: var(--text-secondary); border-color: rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
   .empty { min-height: 320px; display: grid; place-items: center; color: var(--text-secondary); letter-spacing: 2px; }
 </style>

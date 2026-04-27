@@ -1,5 +1,18 @@
 <script lang="ts">
-  import { enrichedGuests, formatBytes, haproxyStats, nodes, pct, platformHealth, reconnectAttempts, storagePools, wsConnected } from '$lib/store';
+  import {
+    enrichedGuests,
+    formatBytes,
+    haproxyStats,
+    isServiceFailed,
+    isServiceRunning,
+    nodes,
+    pct,
+    platformHealth,
+    previewServices,
+    reconnectAttempts,
+    storagePools,
+    wsConnected,
+  } from '$lib/store';
 
   let runningGuests = $derived($enrichedGuests.filter((guest) => guest.status === 'running'));
   let stoppedGuests = $derived($enrichedGuests.filter((guest) => guest.status !== 'running'));
@@ -11,7 +24,7 @@
   let clusterStorageTotal = $derived($storagePools.reduce((sum, s) => sum + (s.total || 0), 0));
   let platformIssues = $derived(countPlatformIssues($platformHealth));
   let backupIssues = $derived(countBackupIssues($platformHealth));
-  let serviceIssues = $derived($enrichedGuests.reduce((sum, guest) => sum + guest.services.filter((service: any) => service.status !== 'running').length, 0));
+  let serviceIssues = $derived($enrichedGuests.reduce((sum, guest) => sum + (guest.service_failed ?? guest.services.filter(isServiceFailed).length), 0));
   let showWebhook = $state(false);
   let webhookTestUrl = $state('');
   let webhookStatus = $state<'idle' | 'sending' | 'ok' | 'error'>('idle');
@@ -24,8 +37,10 @@
 
   function serviceSummary(guest: any) {
     if (guest.services.length > 0) {
-      const up = guest.services.filter((service: any) => service.status === 'running').length;
-      return `${up}/${guest.services.length} services`;
+      const up = guest.service_running ?? guest.services.filter(isServiceRunning).length;
+      const failed = guest.service_failed ?? guest.services.filter(isServiceFailed).length;
+      const total = guest.service_total ?? guest.services.length;
+      return failed > 0 ? `${up}/${total} services · ${failed} failed` : `${up}/${total} services`;
     }
     if (guest.type === 'QEMU') return 'Agent/SSH unavailable';
     return 'No services discovered';
@@ -89,7 +104,7 @@
 <div class="dashboard-page">
   <header class="dash-header">
     <div>
-      <div class="eyebrow">PROXMOX SENTINEL v0.2.17</div>
+      <div class="eyebrow">PROXMOX SENTINEL v0.2.18</div>
       <h1>Cluster Overview</h1>
     </div>
     <div class="header-actions">
@@ -140,7 +155,7 @@
     <div class="summary-card">
       <span>Services</span>
       <strong>{serviceIssues}</strong>
-      <small>{serviceIssues === 0 ? 'no down services seen' : 'not running'}</small>
+      <small>{serviceIssues === 0 ? 'no failed services seen' : 'failed services'}</small>
     </div>
     <div class="summary-card">
       <span>HAProxy</span>
@@ -182,6 +197,14 @@
               <div class="guest-footer">
                 <span class:ok={guest.status === 'running'} class:bad={guest.status !== 'running'}>{guest.status.toUpperCase()}</span>
                 <span>{serviceSummary(guest)}</span>
+              </div>
+
+              <div class="card-services">
+                {#each previewServices(guest.services, 4) as service}
+                  <span class:down={isServiceFailed(service)} class:muted={!isServiceRunning(service) && !isServiceFailed(service)}>{service.name}</span>
+                {:else}
+                  <em>No service detail</em>
+                {/each}
               </div>
             </article>
           {/each}
@@ -260,7 +283,7 @@
   .panel { padding: 16px; min-width: 0; }
   .panel-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; color: var(--text-primary); font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; font-size: 0.72rem; }
   .guest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-  .guest-card { height: 210px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
+  .guest-card { height: 252px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
   .guest-card.stopped { opacity: 0.62; }
   .guest-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; min-height: 58px; }
   .guest-head h2 { font-size: 1rem; line-height: 1.2; overflow-wrap: anywhere; }
@@ -272,6 +295,11 @@
   .mini-gauge strong { font-size: 0.76rem; line-height: 1; max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mini-gauge span { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 0.52rem; letter-spacing: 1.5px; }
   .guest-footer { display: flex; justify-content: space-between; gap: 10px; font-size: 0.64rem; letter-spacing: 0.8px; border-top: 1px solid rgba(255,255,255,0.04); padding-top: 10px; }
+  .card-services { min-height: 24px; display: flex; flex-wrap: wrap; gap: 5px; overflow: hidden; }
+  .card-services span { color: var(--accent-green); border: 1px solid rgba(0,255,136,0.16); background: rgba(0,255,136,0.07); border-radius: 4px; padding: 3px 6px; font-size: 0.58rem; max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-services span.down { color: var(--accent-red); border-color: rgba(255,51,85,0.22); background: rgba(255,51,85,0.08); }
+  .card-services span.muted, .card-services em { color: var(--text-secondary); border-color: rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
+  .card-services em { border: 0; background: transparent; font-size: 0.62rem; }
   .ok { color: var(--accent-green) !important; }
   .bad, .warn { color: var(--accent-red) !important; }
   .note-list { display: flex; flex-direction: column; gap: 10px; }
