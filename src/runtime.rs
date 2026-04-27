@@ -35,6 +35,11 @@ pub async fn run(cfg: Config) -> Result<()> {
             cfg.metrics.listen_addr, cfg.metrics.listen_port
         );
     }
+    if !cfg.services.auto_discover {
+        warn!(
+            "[services].auto_discover=false is kept for compatibility, but service inventory now collects every discovered VM/LXC service. Use explicit service checks or alert_rules to control alerting."
+        );
+    }
 
     let client = Arc::new(ProxmoxClient::new(&cfg.proxmox)?);
 

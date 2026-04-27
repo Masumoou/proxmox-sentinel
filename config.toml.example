@@ -92,8 +92,8 @@ vm_interval_secs             = 30   # Deep VM stats every 30s
 service_check_interval_secs  = 60   # Check services every 60s
 
 # ── Guest Services Monitoring (Optional) ─────────────────────────────────────
-# By default Sentinel discovers all active systemd/OpenRC services it can see.
-# If a discovered service later stops, fails, or disappears, Sentinel alerts.
+# Sentinel always collects every service it can see. auto_discover is kept for
+# compatibility; alert_on_discovered controls baseline/disappeared-service alerts.
 [services]
 auto_discover       = true
 alert_on_discovered = true

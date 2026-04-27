@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.19
+
+- Kept `[services].auto_discover` as a backward-compatible config field while making full service inventory collection unconditional.
+- Added a startup warning when `auto_discover=false` is set, explaining that alert rules and explicit service checks now control alerting instead of hiding collected services.
+
 ## v0.2.18
 
 - Expanded VM and LXC service collection to ingest all services plus running and failed service views instead of relying on compact previews or hardcoded service lists.
