@@ -18,7 +18,7 @@ use tokio::process::Command;
 use tracing::{debug, warn};
 
 use crate::config::SshConfig;
-use crate::proxmox_api::ProxmoxClient;
+use crate::proxmox_api::{GuestAgentFsInfo, ProxmoxClient};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VmDetailedStats {
@@ -161,17 +161,37 @@ impl<'a> VmCollector<'a> {
     // ── Guest Agent path ───────────────────────────────────────────────────
 
     async fn collect_via_agent(&self, node: &str, vmid: u32) -> Result<AgentData> {
-        // Get filesystem info
-        let fs_json = self
-            .client
-            .vm_agent_exec_shell(
-                node,
-                vmid,
-                "df --output=source,fstype,size,used,avail,pcent,target -k --block-size=1 --no-sync",
-            )
-            .await?;
+        self.client.vm_agent_ping(node, vmid).await?;
 
-        let mounts = parse_df_output(&fs_json);
+        let ip = self.client.vm_agent_ip(node, vmid).await;
+
+        let (mut os_name, mut os_version) = self
+            .client
+            .vm_agent_os_info(node, vmid)
+            .await
+            .map(|info| (info.name, info.version))
+            .unwrap_or((None, None));
+
+        let mut mounts = self
+            .client
+            .vm_agent_fs_info(node, vmid)
+            .await
+            .map(agent_mounts_to_vm_mounts)
+            .unwrap_or_default();
+
+        if mounts.is_empty() {
+            let fs_json = self
+                .client
+                .vm_agent_exec_shell(
+                    node,
+                    vmid,
+                    "df --output=source,fstype,size,used,avail,pcent,target -k --block-size=1 --no-sync",
+                )
+                .await
+                .unwrap_or_default();
+
+            mounts = parse_df_output(&fs_json);
+        }
 
         // Get process list via agent exec
         let ps_json = self
@@ -181,7 +201,8 @@ impl<'a> VmCollector<'a> {
                 vmid,
                 "ps -eo pid,comm,pcpu,rss --no-headers --sort=-pcpu",
             )
-            .await?;
+            .await
+            .unwrap_or_default();
 
         let processes = parse_ps_output(&ps_json);
 
@@ -198,15 +219,20 @@ impl<'a> VmCollector<'a> {
             .unwrap_or_default();
         let services = parse_services_output(&svc_json);
 
-        let os_release = self
-            .client
-            .vm_agent_exec_shell(node, vmid, "cat /etc/os-release 2>/dev/null || true")
-            .await
-            .unwrap_or_default();
-        let (os_name, os_version) = parse_os_release(&os_release);
-
-        // Get primary IP
-        let ip = self.client.vm_agent_ip(node, vmid).await;
+        if os_name.is_none() || os_version.is_none() {
+            let os_release = self
+                .client
+                .vm_agent_exec_shell(node, vmid, "cat /etc/os-release 2>/dev/null || true")
+                .await
+                .unwrap_or_default();
+            let (release_name, release_version) = parse_os_release(&os_release);
+            if os_name.is_none() {
+                os_name = release_name;
+            }
+            if os_version.is_none() {
+                os_version = release_version;
+            }
+        }
 
         Ok(AgentData {
             ip,
@@ -432,6 +458,24 @@ fn parse_df_output(output: &str) -> Vec<VmDiskMount> {
         });
     }
     mounts
+}
+
+fn agent_mounts_to_vm_mounts(mounts: Vec<GuestAgentFsInfo>) -> Vec<VmDiskMount> {
+    let skip_fstypes = [
+        "tmpfs", "devtmpfs", "proc", "sysfs", "devpts", "cgroup2", "squashfs",
+    ];
+    mounts
+        .into_iter()
+        .filter(|mount| !skip_fstypes.contains(&mount.fstype.as_str()))
+        .map(|mount| VmDiskMount {
+            mountpoint: mount.mountpoint,
+            total: mount.total,
+            used: mount.used,
+            avail: mount.avail,
+            use_pct: mount.use_pct,
+            fstype: mount.fstype,
+        })
+        .collect()
 }
 
 fn parse_ps_output(output: &str) -> Vec<VmProcess> {

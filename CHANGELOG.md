@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.16
+
+- Fixed QEMU Guest Agent method handling by using `POST` for `/agent/ping` and `/agent/exec`, while keeping native read endpoints on `GET`.
+- Added native guest-agent OS and filesystem collection through `get-osinfo` and `get-fsinfo` before falling back to guest exec.
+- Improved `doctor` with guest-agent method and permission diagnostics for `VM.GuestAgent.Audit` and `VM.GuestAgent.Unrestricted`.
+- Updated documentation for the guest-agent permissions required for full VM OS, IP, mount, service, and process visibility.
+
 ## v0.2.15
 
 - Added a dedicated tag-driven release workflow that publishes the Linux binary, Debian package, checksum file, systemd unit, and release config example.

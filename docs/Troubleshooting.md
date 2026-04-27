@@ -14,7 +14,9 @@ journalctl -u proxmox-sentinel -n 100 --no-pager
 
 Common issues:
 
-- VM services are missing: install QEMU Guest Agent or configure SSH fallback.
+- VM services are missing: install QEMU Guest Agent, grant `VM.GuestAgent.Audit` plus `VM.GuestAgent.Unrestricted`, or configure SSH fallback.
+- Doctor reports `501` or `405` for guest-agent APIs: the client/server method map is mismatched. Proxmox requires `POST` for `/agent/ping` and `/agent/exec`, and `GET` for `/agent/get-osinfo`, `/agent/network-get-interfaces`, `/agent/get-fsinfo`, and `/agent/exec-status`.
+- Doctor reports permission denied for guest-agent APIs: add `VM.GuestAgent.Audit`; add `VM.GuestAgent.Unrestricted` when service/process discovery through guest exec is enabled.
 - `/metrics` returns unauthorized: configure Prometheus with Basic Auth or disable dashboard auth on trusted localhost-only deployments.
 - Backup alerts are noisy: use `exclude_vmids`, `exclude_tags`, and tag rules.
 - ZFS/Ceph data is missing: the host may not use that feature, or the command may not be installed.

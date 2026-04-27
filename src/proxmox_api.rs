@@ -5,7 +5,8 @@
 //
 use anyhow::{Context, Result};
 use reqwest::{Client, ClientBuilder};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -84,6 +85,22 @@ pub struct StorageStatus {
     pub active: bool,
     pub enabled: bool,
     pub kind: String, // "dir" | "zfspool" | "lvm" | "nfs" etc.
+}
+
+#[derive(Debug, Clone)]
+pub struct GuestAgentOsInfo {
+    pub name: Option<String>,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GuestAgentFsInfo {
+    pub mountpoint: String,
+    pub total: u64,
+    pub used: u64,
+    pub avail: u64,
+    pub use_pct: f64,
+    pub fstype: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,7 +234,11 @@ impl ProxmoxClient {
         })
     }
 
-    async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
+    async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        self.get_json(path).await
+    }
+
+    async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = format!("{}/api2/json{}", self.base, path);
         debug!("GET {}", url);
 
@@ -229,8 +250,40 @@ impl ProxmoxClient {
             .await
             .with_context(|| format!("GET {url}"))?;
 
-        if !resp.status().is_success() {
-            anyhow::bail!("API {} returned {}", url, resp.status());
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("API GET {} returned {}: {}", url, status, body);
+        }
+
+        let body: ApiResponse<T> = resp
+            .json()
+            .await
+            .with_context(|| format!("Parsing {url}"))?;
+        Ok(body.data)
+    }
+
+    async fn post_json<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = format!("{}/api2/json{}", self.base, path);
+        debug!("POST {}", url);
+
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", &self.auth_header)
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("API POST {} returned {}: {}", url, status, body);
         }
 
         let body: ApiResponse<T> = resp
@@ -377,10 +430,27 @@ impl ProxmoxClient {
 
     /// Check whether QEMU guest agent responds.
     pub async fn vm_agent_ping(&self, node: &str, vmid: u32) -> Result<()> {
-        let _: serde_json::Value = self
-            .get(&format!("/nodes/{node}/qemu/{vmid}/agent/ping"))
+        let _: Value = self
+            .post_json(
+                &format!("/nodes/{node}/qemu/{vmid}/agent/ping"),
+                &serde_json::json!({}),
+            )
             .await?;
         Ok(())
+    }
+
+    pub async fn vm_agent_os_info(&self, node: &str, vmid: u32) -> Result<GuestAgentOsInfo> {
+        let value: Value = self
+            .get_json(&format!("/nodes/{node}/qemu/{vmid}/agent/get-osinfo"))
+            .await?;
+        Ok(parse_guest_agent_os_info(agent_payload(&value)))
+    }
+
+    pub async fn vm_agent_fs_info(&self, node: &str, vmid: u32) -> Result<Vec<GuestAgentFsInfo>> {
+        let value: Value = self
+            .get_json(&format!("/nodes/{node}/qemu/{vmid}/agent/get-fsinfo"))
+            .await?;
+        Ok(parse_guest_agent_fs_info(agent_payload(&value)))
     }
 
     /// Run a command inside a VM via QEMU guest agent
@@ -409,46 +479,24 @@ impl ProxmoxClient {
         struct ExecReq {
             command: String,
         }
-        #[derive(Deserialize)]
-        struct ExecResp {
-            pid: u64,
-        }
-        #[derive(Deserialize)]
-        struct ExecStatus {
-            exited: Option<u8>,
-            #[serde(rename = "out-data")]
-            out_data: Option<String>,
-            #[serde(rename = "err-data")]
-            #[allow(dead_code)]
-            err_data: Option<String>,
-        }
-
-        let url = format!(
-            "{}/api2/json/nodes/{}/qemu/{}/agent/exec",
-            self.base, node, vmid
-        );
-        let resp: ApiResponse<ExecResp> = self
-            .http
-            .post(&url)
-            .header("Authorization", &self.auth_header)
-            .json(&ExecReq { command })
-            .send()
-            .await?
-            .json()
+        let resp: Value = self
+            .post_json(
+                &format!("/nodes/{node}/qemu/{vmid}/agent/exec"),
+                &ExecReq { command },
+            )
             .await?;
-
-        let pid = resp.data.pid;
+        let pid = extract_agent_pid(&resp).context("agent exec response did not include pid")?;
 
         // Poll until exited (max 10s)
         for _ in 0..20 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            let status: ApiResponse<ExecStatus> = self
+            let status: Value = self
                 .get(&format!(
                     "/nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}"
                 ))
                 .await?;
-            if status.data.exited == Some(1) {
-                return Ok(status.data.out_data.unwrap_or_default());
+            if agent_exec_exited(&status) {
+                return Ok(agent_exec_output(&status));
             }
         }
         anyhow::bail!("agent-exec timed out for vmid {vmid}")
@@ -546,6 +594,87 @@ fn raw_to_guest(raw: RawGuest, kind: GuestKind, node: &str) -> GuestStatus {
     }
 }
 
+fn agent_payload(value: &Value) -> &Value {
+    value.get("result").unwrap_or(value)
+}
+
+fn parse_guest_agent_os_info(value: &Value) -> GuestAgentOsInfo {
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("pretty-name").and_then(Value::as_str))
+        .map(str::to_string);
+    let version = value
+        .get("version")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("version-id").and_then(Value::as_str))
+        .map(str::to_string);
+
+    GuestAgentOsInfo { name, version }
+}
+
+fn parse_guest_agent_fs_info(value: &Value) -> Vec<GuestAgentFsInfo> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let mountpoint = item.get("mountpoint").and_then(Value::as_str)?.to_string();
+            let total = json_u64(item, &["total-bytes", "total_bytes", "total"]);
+            let used = json_u64(item, &["used-bytes", "used_bytes", "used"]);
+            let avail = total.saturating_sub(used);
+            Some(GuestAgentFsInfo {
+                mountpoint,
+                total,
+                used,
+                avail,
+                use_pct: pct(used, total),
+                fstype: item
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        })
+        .collect()
+}
+
+fn extract_agent_pid(value: &Value) -> Option<u64> {
+    agent_payload(value).get("pid").and_then(Value::as_u64)
+}
+
+fn agent_exec_exited(value: &Value) -> bool {
+    let payload = agent_payload(value);
+    payload.get("exited").is_some_and(|v| {
+        v.as_bool()
+            .unwrap_or_else(|| v.as_u64().is_some_and(|n| n == 1))
+    })
+}
+
+fn agent_exec_output(value: &Value) -> String {
+    let payload = agent_payload(value);
+    payload
+        .get("out-data")
+        .or_else(|| payload.get("out_data"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn json_u64(value: &Value, keys: &[&str]) -> u64 {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_u64))
+        .unwrap_or(0)
+}
+
+fn pct(used: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (used as f64 / total as f64) * 100.0
+    }
+}
+
 fn infer_guest_os(name: &str, tags: &[String]) -> (Option<String>, Option<String>) {
     let haystack = format!("{} {}", name, tags.join(" ")).to_lowercase();
     let version = |prefix: &str| extract_version_after(&haystack, prefix);
@@ -598,4 +727,67 @@ fn extract_version_after(text: &str, marker: &str) -> Option<String> {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        agent_exec_exited, agent_exec_output, agent_payload, extract_agent_pid,
+        parse_guest_agent_fs_info, parse_guest_agent_os_info,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn parses_qemu_agent_osinfo_result() {
+        let payload = json!({
+            "result": {
+                "name": "Ubuntu",
+                "pretty-name": "Ubuntu 24.04.4 LTS",
+                "version": "24.04.4 LTS",
+                "version-id": "24.04"
+            }
+        });
+
+        let info = parse_guest_agent_os_info(agent_payload(&payload));
+        assert_eq!(info.name.as_deref(), Some("Ubuntu"));
+        assert_eq!(info.version.as_deref(), Some("24.04.4 LTS"));
+    }
+
+    #[test]
+    fn parses_qemu_agent_fsinfo_result() {
+        let payload = json!({
+            "result": [
+                {
+                    "mountpoint": "/",
+                    "type": "ext4",
+                    "total-bytes": 1000,
+                    "used-bytes": 250
+                }
+            ]
+        });
+
+        let mounts = parse_guest_agent_fs_info(agent_payload(&payload));
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].mountpoint, "/");
+        assert_eq!(mounts[0].avail, 750);
+        assert_eq!(mounts[0].use_pct, 25.0);
+    }
+
+    #[test]
+    fn extracts_qemu_agent_exec_pid_from_result_wrapper() {
+        let payload = json!({ "result": { "pid": 42 } });
+        assert_eq!(extract_agent_pid(&payload), Some(42));
+    }
+
+    #[test]
+    fn parses_qemu_agent_exec_status_result() {
+        let payload = json!({
+            "result": {
+                "exited": true,
+                "out-data": "ok"
+            }
+        });
+        assert!(agent_exec_exited(&payload));
+        assert_eq!(agent_exec_output(&payload), "ok");
+    }
 }

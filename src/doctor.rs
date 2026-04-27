@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::config::Config;
-use crate::proxmox_api::ProxmoxClient;
+use crate::proxmox_api::{GuestKind, GuestStatus, ProxmoxClient};
 
 pub async fn run_doctor(config_path: &Path) -> Result<()> {
     let mut failures = 0usize;
@@ -48,10 +48,11 @@ pub async fn run_doctor(config_path: &Path) -> Result<()> {
         },
     );
 
-    let mut guest_count = 0usize;
+    let mut guests = Vec::new();
     for node in &nodes {
-        guest_count += client.list_guests(node).await.unwrap_or_default().len();
+        guests.extend(client.list_guests(node).await.unwrap_or_default());
     }
+    let guest_count = guests.len();
     check(
         "list guests",
         if guest_count == 0 {
@@ -59,6 +60,11 @@ pub async fn run_doctor(config_path: &Path) -> Result<()> {
         } else {
             Ok(format!("{guest_count} guests"))
         },
+    );
+
+    check(
+        "guest-agent API",
+        check_guest_agent_api(&client, &guests).await,
     );
 
     check(
@@ -90,6 +96,98 @@ pub async fn run_doctor(config_path: &Path) -> Result<()> {
         anyhow::bail!("{failures} doctor checks failed");
     }
     Ok(())
+}
+
+async fn check_guest_agent_api(client: &ProxmoxClient, guests: &[GuestStatus]) -> Result<String> {
+    let running_vms: Vec<&GuestStatus> = guests
+        .iter()
+        .filter(|guest| matches!(guest.kind, GuestKind::Vm))
+        .filter(|guest| guest.status == "running")
+        .collect();
+
+    if running_vms.is_empty() {
+        return Ok("skipped, no running QEMU VMs found".to_string());
+    }
+
+    let mut last_error = None;
+    for guest in running_vms {
+        match client.vm_agent_ping(&guest.node, guest.vmid).await {
+            Ok(()) => {
+                match client
+                    .vm_agent_exec_shell(&guest.node, guest.vmid, "printf sentinel-agent-ok")
+                    .await
+                {
+                    Ok(out) if out.trim() == "sentinel-agent-ok" => {
+                        return Ok(format!(
+                            "{} ({}) on {}: POST ping and POST exec OK",
+                            guest.name, guest.vmid, guest.node
+                        ));
+                    }
+                    Ok(_) => {
+                        return Ok(format!(
+                            "{} ({}) on {}: POST ping OK, exec returned unexpected output",
+                            guest.name, guest.vmid, guest.node
+                        ));
+                    }
+                    Err(e) => {
+                        if let Some(detail) = classify_guest_agent_error(&e.to_string()) {
+                            anyhow::bail!(
+                                "{} ({}) on {}: ping OK, exec failed: {}",
+                                guest.name,
+                                guest.vmid,
+                                guest.node,
+                                detail
+                            );
+                        }
+                        return Ok(format!(
+                            "{} ({}) on {}: POST ping OK, exec not verified: {}",
+                            guest.name, guest.vmid, guest.node, e
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                let message = e.to_string();
+                if let Some(detail) = classify_guest_agent_error(&message) {
+                    anyhow::bail!(
+                        "{} ({}) on {}: {}",
+                        guest.name,
+                        guest.vmid,
+                        guest.node,
+                        detail
+                    );
+                }
+                last_error = Some(format!(
+                    "{} ({}) on {}: {message}",
+                    guest.name, guest.vmid, guest.node
+                ));
+            }
+        }
+    }
+
+    Ok(format!(
+        "not verified, no running QEMU guest agent responded ({})",
+        last_error.unwrap_or_else(|| "no detailed error".to_string())
+    ))
+}
+
+fn classify_guest_agent_error(message: &str) -> Option<String> {
+    let lower = message.to_lowercase();
+    if lower.contains("401") || lower.contains("403") || lower.contains("permission") {
+        return Some(
+            "permission denied; add VM.GuestAgent.Audit for native guest-agent reads and VM.GuestAgent.Unrestricted if guest exec/service discovery is enabled".to_string(),
+        );
+    }
+    if lower.contains("501")
+        || lower.contains("405")
+        || lower.contains("not implemented")
+        || lower.contains("method not allowed")
+    {
+        return Some(
+            "guest-agent API method mismatch; Proxmox requires POST for /agent/ping and /agent/exec, and GET for /agent/get-osinfo, /agent/network-get-interfaces, /agent/get-fsinfo, and /agent/exec-status".to_string(),
+        );
+    }
+    None
 }
 
 async fn check_port_or_running_sentinel(cfg: &Config) -> Result<String> {

@@ -7,6 +7,15 @@ QEMU VM services require one of:
 - QEMU Guest Agent installed and responsive
 - SSH fallback configured in `[ssh]`
 
+For QEMU Guest Agent service discovery, the Proxmox token needs:
+
+```text
+VM.GuestAgent.Audit
+VM.GuestAgent.Unrestricted
+```
+
+Sentinel uses native guest-agent endpoints for OS, IP, and filesystem data, then uses guest exec only for service and process discovery.
+
 Service rules can target a VM/LXC by `vmid` and can evaluate:
 
 ```text

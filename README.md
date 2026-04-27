@@ -97,7 +97,7 @@ chmod +x /usr/local/bin/proxmox-sentinel
 Run this on a Proxmox node:
 
 ```bash
-pveum role add SentinelAudit -privs "VM.Audit Sys.Audit Datastore.Audit" 2>/dev/null || true
+pveum role add SentinelAudit -privs "VM.Audit VM.GuestAgent.Audit VM.GuestAgent.Unrestricted Sys.Audit Datastore.Audit Pool.Audit" 2>/dev/null || true
 pveum user add sentinel@pve --comment "Proxmox Sentinel monitoring" 2>/dev/null || true
 pveum aclmod / -user sentinel@pve -role SentinelAudit
 pveum user token add sentinel@pve monitoring --privsep 0
@@ -170,6 +170,7 @@ Doctor checks:
 - Proxmox API connection works
 - Nodes can be listed
 - Guests can be listed
+- QEMU Guest Agent API method and permissions are sane when a running VM with an agent is available
 - cgroup filesystem is readable
 - LXC rootfs log paths are accessible
 - configured port can be bound
@@ -305,10 +306,14 @@ Use a read-only token instead of an Administrator token. Recommended minimum pri
 ```text
 Sys.Audit
 VM.Audit
+VM.GuestAgent.Audit          # native guest-agent reads: ping, OS, IP, filesystem info
+VM.GuestAgent.Unrestricted   # guest exec for service/process discovery
 Datastore.Audit
 Pool.Audit
 SDN.Audit      # only if SDN features are used
 ```
+
+Sentinel uses Proxmox's method map correctly: `POST` for `/agent/ping` and `/agent/exec`, and `GET` for `/agent/get-osinfo`, `/agent/network-get-interfaces`, `/agent/get-fsinfo`, and `/agent/exec-status`.
 
 The daemon still runs as root on the Proxmox host for local cgroup, LXC, and log access.
 
