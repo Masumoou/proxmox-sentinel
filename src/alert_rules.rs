@@ -17,6 +17,14 @@ pub struct ServiceRuleState {
     pub sub_state: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct GuestDiskRuleMount {
+    pub mountpoint: String,
+    pub used: u64,
+    pub total: u64,
+    pub use_pct: f64,
+}
+
 impl ServiceRuleState {
     pub fn new(
         name: impl Into<String>,
@@ -195,6 +203,67 @@ impl AlertRuleEvaluator {
         alerts
     }
 
+    pub fn evaluate_guest_disks(
+        &mut self,
+        rules: &[AlertRuleConfig],
+        vmid: u32,
+        node: &str,
+        mounts: &[GuestDiskRuleMount],
+    ) -> Vec<Alert> {
+        let now = self.now();
+        let mut alerts = Vec::new();
+        for rule in rules
+            .iter()
+            .filter(|rule| rule.enabled && target_is(rule, "guest_disk"))
+        {
+            if rule.vmid.is_some_and(|wanted| wanted != vmid) {
+                continue;
+            }
+            if rule.node.as_deref().is_some_and(|wanted| wanted != node) {
+                continue;
+            }
+
+            let selected = if let Some(wanted_mount) = rule.mount.as_deref() {
+                mounts.iter().find(|mount| mount.mountpoint == wanted_mount)
+            } else {
+                mounts.iter().max_by(|a, b| a.use_pct.total_cmp(&b.use_pct))
+            };
+
+            let Some(mount) = selected else {
+                if let Some(alert) = self.duration_alert(
+                    rule,
+                    &format!("guest_disk:{vmid}:missing"),
+                    false,
+                    "guest disk data is unavailable".to_string(),
+                    now,
+                ) {
+                    alerts.push(alert);
+                }
+                continue;
+            };
+
+            let metric = rule.metric.as_deref().unwrap_or("used_percent");
+            let value = match metric {
+                "used_percent" | "usage" | "use_pct" | "used_pct" => mount.use_pct,
+                "free_percent" | "avail_percent" => 100.0 - mount.use_pct,
+                "used_bytes" | "used" => mount.used as f64,
+                "total_bytes" | "total" => mount.total as f64,
+                _ => continue,
+            };
+            let (condition, detail) = compare_number(rule, value);
+            if let Some(alert) = self.duration_alert(
+                rule,
+                &format!("guest_disk:{vmid}:{}", mount.mountpoint),
+                condition,
+                format!("mount {} {} is {:.1}", mount.mountpoint, metric, value),
+                now,
+            ) {
+                alerts.push(alert);
+            }
+        }
+        alerts
+    }
+
     pub fn evaluate_services(
         &mut self,
         rules: &[AlertRuleConfig],
@@ -267,7 +336,9 @@ impl AlertRuleEvaluator {
 }
 
 pub fn normalize_service_name(name: &str) -> String {
-    name.strip_suffix(".service").unwrap_or(name).to_string()
+    name.strip_suffix(".service")
+        .unwrap_or(name)
+        .to_ascii_lowercase()
 }
 
 pub fn service_state_map<I>(services: I) -> HashMap<String, ServiceRuleState>
@@ -374,11 +445,14 @@ mod tests {
             node: None,
             storage: None,
             service: None,
+            mount: None,
             metric: None,
             operator: None,
             threshold: None,
             value: None,
             condition: None,
+            notification_channel: None,
+            notes: None,
             duration_secs: 0,
             severity: AlertSeverity::Warning,
         }
@@ -539,6 +613,30 @@ mod tests {
         usage.threshold = Some(85.0);
 
         assert_eq!(evaluator.evaluate_storage(&[usage], &storage()).len(), 1);
+    }
+
+    #[test]
+    fn evaluates_guest_disk_rule_for_root_mount() {
+        let mut evaluator = AlertRuleEvaluator::new();
+        let mut disk = rule("root-disk-high", "guest_disk");
+        disk.vmid = Some(101);
+        disk.mount = Some("/".into());
+        disk.metric = Some("used_percent".into());
+        disk.operator = Some(">".into());
+        disk.threshold = Some(85.0);
+        let mounts = [GuestDiskRuleMount {
+            mountpoint: "/".into(),
+            used: 90,
+            total: 100,
+            use_pct: 90.0,
+        }];
+
+        assert_eq!(
+            evaluator
+                .evaluate_guest_disks(&[disk], 101, "pve1", &mounts)
+                .len(),
+            1
+        );
     }
 
     #[test]

@@ -49,6 +49,19 @@ export interface GuestData {
   os_version?: string | null;
 }
 
+export interface GuestDiskSummary {
+  total: number;
+  used: number;
+  free: number;
+  used_pct: number;
+  max_mount_pct: number;
+  max_mount?: string;
+  root_used_pct?: number;
+  root_total?: number;
+  root_used?: number;
+  available: boolean;
+}
+
 export interface GuestDetail {
   services?: ServiceData[];
   service_total?: number;
@@ -126,6 +139,7 @@ export const enrichedGuests = derived([guests, detailMap], ([$guests, $detailMap
       service_running: runningServices,
       service_failed: failedServices,
       disk_mounts: detail.disk_mounts || [],
+      disk_summary: summarizeGuestDisks(detail.disk_mounts || []),
       agent: detail.agent,
       ssh: detail.ssh,
       ip: detail.ip,
@@ -377,7 +391,10 @@ export function serviceClassification(service: ServiceData): string {
   if (['docker', 'containerd', 'podman'].includes(name)) return 'container';
   if (['haproxy', 'keepalived'].includes(name)) return 'proxy/lb';
   if (['prometheus', 'grafana', 'node_exporter', 'node-exporter', 'zabbix-agent'].includes(name)) return 'monitoring';
-  if (name.startsWith('systemd-') || ['dbus', 'cron', 'rsyslog', 'qemu-guest-agent'].includes(name)) return 'system';
+  if (
+    name.startsWith('systemd-') ||
+    ['dbus', 'dbus-broker', 'cron', 'crond', 'rsyslog', 'qemu-guest-agent', 'fwupd', 'fwupd-refresh', 'getty', 'serial-getty', 'chronyd', 'networkmanager'].includes(name)
+  ) return 'system';
   return 'other';
 }
 
@@ -402,6 +419,40 @@ export function servicePriority(service: ServiceData): number {
   if (isServiceRunning(service) && serviceClassification(service) !== 'system') return 100;
   if (isServiceRunning(service)) return 130;
   return 180;
+}
+
+export function summarizeGuestDisks(mounts: DiskMount[]): GuestDiskSummary {
+  const real = (mounts || []).filter((mount) => mount.total > 0);
+  if (real.length === 0) {
+    return { total: 0, used: 0, free: 0, used_pct: 0, max_mount_pct: 0, available: false };
+  }
+  const total = real.reduce((sum, mount) => sum + mount.total, 0);
+  const used = real.reduce((sum, mount) => sum + mount.used, 0);
+  const free = real.reduce((sum, mount) => sum + (mount.avail ?? Math.max(0, mount.total - mount.used)), 0);
+  const max = [...real].sort((a, b) => (b.use_pct || 0) - (a.use_pct || 0))[0];
+  const root = real.find((mount) => mount.mountpoint === '/');
+  return {
+    total,
+    used,
+    free,
+    used_pct: pct(used, total),
+    max_mount_pct: max?.use_pct || 0,
+    max_mount: max?.mountpoint,
+    root_used_pct: root?.use_pct,
+    root_total: root?.total,
+    root_used: root?.used,
+    available: true,
+  };
+}
+
+export function diskSummaryLabel(summary?: GuestDiskSummary): string {
+  if (!summary?.available) return 'storage unavailable';
+  const percent = summary.root_used_pct ?? summary.used_pct;
+  const total = summary.root_total ?? summary.total;
+  if (summary.max_mount && summary.max_mount !== '/' && summary.max_mount_pct > percent + 10) {
+    return `total ${Math.round(summary.used_pct)}%, max ${summary.max_mount} ${Math.round(summary.max_mount_pct)}%`;
+  }
+  return `${percent.toFixed(1)}% / ${formatBytes(total)}`;
 }
 
 export function sortedServices(services: ServiceData[]): ServiceData[] {

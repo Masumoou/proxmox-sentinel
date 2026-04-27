@@ -140,6 +140,15 @@ struct CephHealth {
     osd_up: Option<u64>,
     osd_total: Option<u64>,
     mons: Vec<String>,
+    warnings: Vec<CephWarning>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CephWarning {
+    name: String,
+    severity: String,
+    message: String,
+    detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

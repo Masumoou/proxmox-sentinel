@@ -4,6 +4,7 @@
 // Stores metric snapshots, log lines, and alert history
 // with configurable retention periods.
 
+use crate::config::AlertRuleConfig;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -135,6 +136,14 @@ impl Storage {
             );
             CREATE INDEX IF NOT EXISTS idx_app_metrics_ts ON app_metrics(ts);
             CREATE INDEX IF NOT EXISTS idx_app_metrics_app ON app_metrics(app_name);
+
+            -- UI-created custom alert rules. Static rules still live in config.toml.
+            CREATE TABLE IF NOT EXISTS alert_rules_ui (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                rule_json  TEXT NOT NULL
+            );
             ",
         )
         .context("Creating database tables")?;
@@ -346,6 +355,86 @@ impl Storage {
             results.push(row?);
         }
         Ok(results)
+    }
+
+    pub fn query_ui_alert_rule_configs(&self) -> Result<Vec<AlertRuleConfig>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT rule_json FROM alert_rules_ui ORDER BY id ASC")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+
+        let mut rules = Vec::new();
+        for row in rows {
+            let raw = row?;
+            match serde_json::from_str::<AlertRuleConfig>(&raw) {
+                Ok(rule) => rules.push(rule),
+                Err(e) => tracing::warn!("Ignoring invalid UI alert rule JSON: {e}"),
+            }
+        }
+        Ok(rules)
+    }
+
+    pub fn query_ui_alert_rules(&self) -> Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at, updated_at, rule_json FROM alert_rules_ui ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id = row.get::<_, i64>(0)?;
+            let created_at = row.get::<_, String>(1)?;
+            let updated_at = row.get::<_, String>(2)?;
+            let raw = row.get::<_, String>(3)?;
+            let mut value: serde_json::Value =
+                serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("id".to_string(), serde_json::json!(id));
+                obj.insert("source".to_string(), serde_json::json!("ui"));
+                obj.insert("created_at".to_string(), serde_json::json!(created_at));
+                obj.insert("updated_at".to_string(), serde_json::json!(updated_at));
+            }
+            Ok(value)
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn insert_ui_alert_rule(&self, rule: &AlertRuleConfig) -> Result<i64> {
+        rule.validate()?;
+        let raw = serde_json::to_string(rule)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO alert_rules_ui (rule_json) VALUES (?1)",
+            params![raw],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_ui_alert_rule(&self, id: i64, rule: &AlertRuleConfig) -> Result<()> {
+        rule.validate()?;
+        let raw = serde_json::to_string(rule)?;
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE alert_rules_ui
+             SET rule_json = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE id = ?2",
+            params![raw, id],
+        )?;
+        if changed == 0 {
+            anyhow::bail!("alert rule {id} not found");
+        }
+        Ok(())
+    }
+
+    pub fn delete_ui_alert_rule(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute("DELETE FROM alert_rules_ui WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            anyhow::bail!("alert rule {id} not found");
+        }
+        Ok(())
     }
 
     // ── Retention cleanup ────────────────────────────────────────────────────

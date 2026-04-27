@@ -43,11 +43,21 @@ database    mysql, mariadb, postgresql, redis, mongodb
 container   docker, containerd, podman
 proxy/lb    haproxy, keepalived
 monitoring  prometheus, grafana, node_exporter, zabbix-agent
-system      systemd-*, dbus, cron, rsyslog, qemu-guest-agent
+system      systemd-*, dbus/dbus-broker, cron/crond, rsyslog, qemu-guest-agent, fwupd, chronyd, NetworkManager
 other       everything else
 ```
 
 The compact dashboard preview shows failed services first, then application services like `apache2`, `php8.3-fpm`, and `ssh`, then lower-priority system services. The full guest service table still exposes every discovered service.
+
+Default service alerting is quiet. Sentinel collects services like `fwupd`, but it does not raise critical alerts for them unless you explicitly configure a service check, `critical_patterns`, or an `[[alert_rules]]` service rule:
+
+```toml
+[services]
+critical_patterns = []
+auto_watch_running_services = false
+alert_on_previously_running_down = false
+alert_on_discovered = false # deprecated compatibility flag; ignored in v0.2.20+
+```
 
 When `ss` is available inside the guest, Sentinel also runs `ss -lntup` and maps common process names to listening ports where possible, such as `apache2 -> 80,443`, `php-fpm8.3 -> 9000`, and `sshd -> 22`.
 

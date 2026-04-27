@@ -3,7 +3,7 @@
   --bg-gradient: linear-gradient(135deg, #0a0e1a 0%, #0d1225 50%, #0a0e1a 100%);
   --panel-bg: rgba(12, 18, 35, 0.85);
   --card-bg: rgba(14, 22, 42, 0.9);
-  --border-color: rgba(0, 210, 255, 0.12);
+  --border-color: rgba(0, 210, 255, 0.18);
   --border-glow: rgba(0, 210, 255, 0.25);
 
   /* Accent Colors */
@@ -18,9 +18,9 @@
   --accent-pink: #ff6ec7;
 
   /* Text */
-  --text-primary: #e8edf5;
-  --text-secondary: #5a6a85;
-  --text-dim: #3a4a65;
+  --text-primary: #f3f7fb;
+  --text-secondary: #9fb3c8;
+  --text-dim: #7f93ad;
 
   /* Effects */
   --neon-cyan-glow: 0 0 10px rgba(0, 212, 255, 0.3), 0 0 20px rgba(0, 212, 255, 0.1);
@@ -41,6 +41,8 @@ body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 /* ── Glass Panel ─────────────────────────────────────────── */

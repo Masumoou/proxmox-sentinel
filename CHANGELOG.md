@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.20
+
+- Added guest filesystem summaries from collected mount data so VM/LXC cards and the guest table can show disk usage alongside CPU/RAM.
+- Added `guest_disk` custom alert rules for mount usage thresholds such as VM 104 `/` above 85%.
+- Added SQLite-backed UI custom alert rules with create/edit/delete/test-evaluate support on the Alerts page while preserving read-only config rules.
+- Changed service-down defaults to quiet: `critical_patterns = []`, `auto_watch_running_services = false`, and `alert_on_previously_running_down = false`.
+- Kept `fwupd` collected as a normal system service but removed it from any default critical behavior.
+- Improved Fedora/systemd service collection fallback diagnostics and parsing coverage.
+- Reworked Ceph health display to show readable warnings instead of raw JSON, and raised dashboard text contrast/readability.
+
 ## v0.2.19
 
 - Kept `[services].auto_discover` as a backward-compatible config field while making full service inventory collection unconditional.

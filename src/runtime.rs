@@ -7,7 +7,8 @@ use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
 
 use crate::alert_rules::{
-    AlertRuleEvaluator, ServiceRuleState, normalize_service_name, service_state_map,
+    AlertRuleEvaluator, GuestDiskRuleMount, ServiceRuleState, normalize_service_name,
+    service_state_map,
 };
 use crate::alerts::{self, Alert, AlertDispatcher};
 use crate::cluster;
@@ -22,7 +23,10 @@ use crate::storage::Storage;
 
 mod services;
 
-use services::{is_public_bind_without_auth, service_is_healthy};
+use services::{
+    critical_pattern_alerts, is_public_bind_without_auth, service_auto_watch_enabled,
+    service_is_healthy,
+};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Main loop
@@ -38,6 +42,11 @@ pub async fn run(cfg: Config) -> Result<()> {
     if !cfg.services.auto_discover {
         warn!(
             "[services].auto_discover=false is kept for compatibility, but service inventory now collects every discovered VM/LXC service. Use explicit service checks or alert_rules to control alerting."
+        );
+    }
+    if cfg.services.alert_on_discovered {
+        warn!(
+            "[services].alert_on_discovered is deprecated and ignored in v0.2.20. Use auto_watch_running_services or alert_on_previously_running_down to intentionally watch disappearing services."
         );
     }
 
@@ -143,6 +152,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         hub_state,
         cfg.metrics.auth.clone(),
         cfg.metrics.prometheus_enabled,
+        cfg.alert_rules.clone(),
     );
     tokio::spawn(async move {
         if let Err(e) = metrics_server.run().await {
@@ -191,6 +201,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                 let mut ws_nodes = Vec::new();
                 let mut ws_guests = Vec::new();
                 let mut ws_storage = Vec::new();
+                let alert_rules = alert_rules_for_runtime(&cfg, &storage);
 
                 for node in nodes.iter() {
                     // Node status
@@ -229,7 +240,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                             }
                             let rule_alerts = {
                                 let mut evaluator = rule_evaluator.lock().await;
-                                evaluator.evaluate_node(&cfg.alert_rules, &status)
+                                evaluator.evaluate_node(&alert_rules, &status)
                             };
                             for a in rule_alerts {
                                 dispatcher.dispatch(a).await;
@@ -281,7 +292,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 }
                                 let rule_alerts = {
                                     let mut evaluator = rule_evaluator.lock().await;
-                                    evaluator.evaluate_guest(&cfg.alert_rules, guest)
+                                    evaluator.evaluate_guest(&alert_rules, guest)
                                 };
                                 for a in rule_alerts {
                                     dispatcher.dispatch(a).await;
@@ -343,7 +354,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 }
                                 let rule_alerts = {
                                     let mut evaluator = rule_evaluator.lock().await;
-                                    evaluator.evaluate_storage(&cfg.alert_rules, s)
+                                    evaluator.evaluate_storage(&alert_rules, s)
                                 };
                                 for a in rule_alerts {
                                     dispatcher.dispatch(a).await;
@@ -391,6 +402,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                 ticker.tick().await;
 
                 let mut lxc_details = Vec::new();
+                let alert_rules = alert_rules_for_runtime(&cfg_inner, &storage);
 
                 for node in nodes.iter() {
                     let guests = match client.list_guests(node).await {
@@ -470,7 +482,18 @@ pub async fn run(cfg: Config) -> Result<()> {
                             }
                         }
 
-                        if cfg_inner.services.alert_on_discovered && !stats.services.is_empty() {
+                        for service in critical_pattern_alerts(
+                            &cfg_inner.services.critical_patterns,
+                            guest.vmid,
+                            &guest.node,
+                            &service_states,
+                        ) {
+                            dispatcher.dispatch(service).await;
+                        }
+
+                        if service_auto_watch_enabled(&cfg_inner.services)
+                            && !stats.services.is_empty()
+                        {
                             let baseline = discovered_lxc_services.entry(guest.vmid).or_default();
                             if baseline.is_empty() {
                                 baseline.extend(active_services.iter().cloned());
@@ -493,7 +516,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         let rule_alerts = {
                             let mut evaluator = rule_evaluator.lock().await;
                             evaluator.evaluate_services(
-                                &cfg_inner.alert_rules,
+                                &alert_rules,
                                 guest.vmid,
                                 &guest.node,
                                 &service_states,
@@ -512,7 +535,9 @@ pub async fn run(cfg: Config) -> Result<()> {
                                     "mountpoint": d.mountpoint,
                                     "total": d.total,
                                     "used": d.used,
-                                    "use_pct": d.use_pct
+                                    "avail": d.avail,
+                                    "use_pct": d.use_pct,
+                                    "fstype": d.fstype
                                 })
                             })
                             .collect();
@@ -543,6 +568,29 @@ pub async fn run(cfg: Config) -> Result<()> {
                             ) {
                                 dispatcher.dispatch(alert).await;
                             }
+                        }
+
+                        let disk_rule_mounts: Vec<GuestDiskRuleMount> = stats
+                            .disk_mounts
+                            .iter()
+                            .map(|mount| GuestDiskRuleMount {
+                                mountpoint: mount.mountpoint.clone(),
+                                used: mount.used,
+                                total: mount.total,
+                                use_pct: mount.use_pct,
+                            })
+                            .collect();
+                        let disk_rule_alerts = {
+                            let mut evaluator = rule_evaluator.lock().await;
+                            evaluator.evaluate_guest_disks(
+                                &alert_rules,
+                                guest.vmid,
+                                &guest.node,
+                                &disk_rule_mounts,
+                            )
+                        };
+                        for alert in disk_rule_alerts {
+                            dispatcher.dispatch(alert).await;
                         }
 
                         if !watched_lxcs.contains(&guest.vmid) {
@@ -594,6 +642,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                 let vm_collector = VmCollector::new(&client, &cfg_inner.ssh);
 
                 let mut vm_details = Vec::new();
+                let alert_rules = alert_rules_for_runtime(&cfg_inner, &storage);
 
                 for node in nodes.iter() {
                     let guests = match client.list_guests(node).await {
@@ -685,7 +734,16 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 }
                             }
 
-                            if cfg_inner.services.alert_on_discovered
+                            for service in critical_pattern_alerts(
+                                &cfg_inner.services.critical_patterns,
+                                guest.vmid,
+                                node,
+                                &service_states,
+                            ) {
+                                dispatcher.dispatch(service).await;
+                            }
+
+                            if service_auto_watch_enabled(&cfg_inner.services)
                                 && !vm_stats.services.is_empty()
                             {
                                 let baseline =
@@ -710,7 +768,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                             let rule_alerts = {
                                 let mut evaluator = rule_evaluator.lock().await;
                                 evaluator.evaluate_services(
-                                    &cfg_inner.alert_rules,
+                                    &alert_rules,
                                     guest.vmid,
                                     node,
                                     &service_states,
@@ -729,10 +787,35 @@ pub async fn run(cfg: Config) -> Result<()> {
                                     "mountpoint": d.mountpoint,
                                     "total": d.total,
                                     "used": d.used,
-                                    "use_pct": d.use_pct
+                                    "avail": d.avail,
+                                    "use_pct": d.use_pct,
+                                    "fstype": d.fstype
                                 })
                             })
                             .collect();
+
+                        let disk_rule_mounts: Vec<GuestDiskRuleMount> = vm_stats
+                            .disk_mounts
+                            .iter()
+                            .map(|mount| GuestDiskRuleMount {
+                                mountpoint: mount.mountpoint.clone(),
+                                used: mount.used,
+                                total: mount.total,
+                                use_pct: mount.use_pct,
+                            })
+                            .collect();
+                        let disk_rule_alerts = {
+                            let mut evaluator = rule_evaluator.lock().await;
+                            evaluator.evaluate_guest_disks(
+                                &alert_rules,
+                                guest.vmid,
+                                node,
+                                &disk_rule_mounts,
+                            )
+                        };
+                        for alert in disk_rule_alerts {
+                            dispatcher.dispatch(alert).await;
+                        }
 
                         vm_details.push(json!({
                             "vmid": guest.vmid,
@@ -991,4 +1074,13 @@ pub async fn run(cfg: Config) -> Result<()> {
 
     info!("Shutdown complete.");
     Ok(())
+}
+
+fn alert_rules_for_runtime(cfg: &Config, storage: &Storage) -> Vec<crate::config::AlertRuleConfig> {
+    let mut rules = cfg.alert_rules.clone();
+    match storage.query_ui_alert_rule_configs() {
+        Ok(mut ui_rules) => rules.append(&mut ui_rules),
+        Err(e) => warn!("Could not load UI alert rules: {e}"),
+    }
+    rules
 }

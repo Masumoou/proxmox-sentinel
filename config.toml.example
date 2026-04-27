@@ -92,11 +92,14 @@ vm_interval_secs             = 30   # Deep VM stats every 30s
 service_check_interval_secs  = 60   # Check services every 60s
 
 # ── Guest Services Monitoring (Optional) ─────────────────────────────────────
-# Sentinel always collects every service it can see. auto_discover is kept for
-# compatibility; alert_on_discovered controls baseline/disappeared-service alerts.
+# Sentinel always collects every service it can see. Alerts are quiet by default:
+# only explicit checks, user-defined critical_patterns, and [[alert_rules]] fire.
 [services]
-auto_discover       = true
-alert_on_discovered = true
+auto_discover = true                    # compatibility flag; inventory still collects all services
+critical_patterns = []                  # e.g. ["apache2", "php*-fpm", "postgresql"]
+auto_watch_running_services = false     # remember running services and alert if they disappear
+alert_on_previously_running_down = false
+alert_on_discovered = false             # deprecated compatibility flag; ignored in v0.2.20+
 
 # Optional: mark specific services as critical for a VM/LXC. These alerts fire
 # even if the service was already stopped when Sentinel first started.
@@ -189,7 +192,7 @@ required       = false
 # [[alert_rules]]
 # name = "web01-cpu-high"
 # enabled = true
-# target = "vm"                  # node | vm | lxc | guest | service | storage
+# target = "vm"                  # node | vm | lxc | guest | service | storage | guest_disk
 # vmid = 101
 # metric = "cpu"
 # operator = ">"
@@ -206,6 +209,18 @@ required       = false
 # condition = "down"
 # duration_secs = 60
 # severity = "critical"
+
+# [[alert_rules]]
+# name = "web01-root-disk-high"
+# enabled = true
+# target = "guest_disk"
+# vmid = 101
+# mount = "/"
+# metric = "used_percent"
+# operator = ">"
+# threshold = 85
+# duration_secs = 300
+# severity = "warning"
 
 [certificates]
 warn_days     = 30

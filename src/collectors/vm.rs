@@ -93,7 +93,7 @@ impl<'a> VmCollector<'a> {
         };
 
         // Try QEMU guest agent first
-        match self.collect_via_agent(node, vmid).await {
+        match self.collect_via_agent(node, vmid, name).await {
             Ok(agent_data) => {
                 stats.agent_available = true;
                 stats.ip_address = agent_data.ip;
@@ -169,7 +169,7 @@ impl<'a> VmCollector<'a> {
 
     // ── Guest Agent path ───────────────────────────────────────────────────
 
-    async fn collect_via_agent(&self, node: &str, vmid: u32) -> Result<AgentData> {
+    async fn collect_via_agent(&self, node: &str, vmid: u32, name: &str) -> Result<AgentData> {
         self.client.vm_agent_ping(node, vmid).await?;
 
         let ip = self.client.vm_agent_ip(node, vmid).await;
@@ -226,21 +226,7 @@ impl<'a> VmCollector<'a> {
         // no Sentinel sidecar inside the VM and no SSH key requirement. Collect
         // every unit, then collect running/failed views too so distro differences
         // do not hide state.
-        let svc_json = match self
-            .client
-            .vm_agent_exec_shell(
-                node,
-                vmid,
-                "(systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null; systemctl list-units --type=service --state=running --no-pager --no-legend --plain 2>/dev/null; systemctl --failed --type=service --no-pager --no-legend --plain 2>/dev/null) || rc-status --nocolor 2>/dev/null || true",
-            )
-            .await
-        {
-            Ok(output) => output,
-            Err(e) => {
-                warn!("VM {vmid} guest-agent exec_error services: {e}");
-                String::new()
-            }
-        };
+        let svc_json = self.collect_agent_service_output(node, vmid, name).await;
 
         let port_output = match self
             .client
@@ -257,6 +243,14 @@ impl<'a> VmCollector<'a> {
             parse_services_output(&svc_json),
             &parse_ss_output(&port_output),
         );
+        if services.is_empty() {
+            warn!(
+                "VM {name} ({vmid}) service discovery returned 0 parsed services; os={:?} {:?}; first_output_lines={:?}",
+                os_name,
+                os_version,
+                first_lines(&svc_json, 50)
+            );
+        }
 
         if os_name.is_none() || os_version.is_none() {
             let os_release = match self
@@ -287,6 +281,58 @@ impl<'a> VmCollector<'a> {
             processes,
             services,
         })
+    }
+
+    async fn collect_agent_service_output(&self, node: &str, vmid: u32, name: &str) -> String {
+        let commands = [
+            (
+                "all_plain",
+                "systemctl list-units --type=service --all --no-pager --no-legend --plain 2>&1",
+            ),
+            (
+                "all_default",
+                "systemctl list-units --type=service --all --no-pager --no-legend 2>&1",
+            ),
+            (
+                "running_plain",
+                "systemctl list-units --type=service --state=running --no-pager --no-legend --plain 2>&1",
+            ),
+            (
+                "failed_plain",
+                "systemctl --failed --type=service --no-pager --no-legend --plain 2>&1",
+            ),
+        ];
+        let mut combined = String::new();
+        for (label, command) in commands {
+            match self.client.vm_agent_exec_shell(node, vmid, command).await {
+                Ok(output) => {
+                    if !output.trim().is_empty() {
+                        debug!(
+                            "VM {name} ({vmid}) service command {label} returned {} bytes",
+                            output.len()
+                        );
+                        combined.push_str(&output);
+                        combined.push('\n');
+                    }
+                    if label == "all_default" && !parse_services_output(&combined).is_empty() {
+                        continue;
+                    }
+                }
+                Err(e) => warn!("VM {name} ({vmid}) guest-agent exec_error services {label}: {e}"),
+            }
+        }
+
+        if parse_services_output(&combined).is_empty() {
+            match self
+                .client
+                .vm_agent_exec_shell(node, vmid, "rc-status --nocolor 2>&1 || true")
+                .await
+            {
+                Ok(output) => combined.push_str(&output),
+                Err(e) => warn!("VM {name} ({vmid}) guest-agent exec_error rc-status: {e}"),
+            }
+        }
+        combined
     }
 
     // ── SSH path ───────────────────────────────────────────────────────────
@@ -478,9 +524,6 @@ fn ssh_collect(ip: &str, cfg: &SshConfig) -> Result<SshData> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn parse_df_output(output: &str) -> Vec<VmDiskMount> {
-    let skip_fstypes = [
-        "tmpfs", "devtmpfs", "proc", "sysfs", "devpts", "cgroup2", "squashfs",
-    ];
     let mut mounts = Vec::new();
 
     for line in output.lines().skip(1) {
@@ -488,7 +531,7 @@ fn parse_df_output(output: &str) -> Vec<VmDiskMount> {
         if parts.len() < 7 {
             continue;
         }
-        if skip_fstypes.contains(&parts[1]) {
+        if is_pseudo_filesystem(parts[1], parts[6], false) {
             continue;
         }
         mounts.push(VmDiskMount {
@@ -504,12 +547,9 @@ fn parse_df_output(output: &str) -> Vec<VmDiskMount> {
 }
 
 fn agent_mounts_to_vm_mounts(mounts: Vec<GuestAgentFsInfo>) -> Vec<VmDiskMount> {
-    let skip_fstypes = [
-        "tmpfs", "devtmpfs", "proc", "sysfs", "devpts", "cgroup2", "squashfs",
-    ];
     mounts
         .into_iter()
-        .filter(|mount| !skip_fstypes.contains(&mount.fstype.as_str()))
+        .filter(|mount| !is_pseudo_filesystem(&mount.fstype, &mount.mountpoint, false))
         .map(|mount| VmDiskMount {
             mountpoint: mount.mountpoint,
             total: mount.total,
@@ -812,7 +852,18 @@ fn classify_service(name: &str) -> String {
     } else if key.starts_with("systemd-")
         || matches!(
             key.as_str(),
-            "dbus" | "cron" | "rsyslog" | "qemu-guest-agent"
+            "dbus"
+                | "dbus-broker"
+                | "cron"
+                | "crond"
+                | "rsyslog"
+                | "qemu-guest-agent"
+                | "fwupd"
+                | "fwupd-refresh"
+                | "getty"
+                | "serial-getty"
+                | "chronyd"
+                | "networkmanager"
         )
     {
         "system"
@@ -820,6 +871,33 @@ fn classify_service(name: &str) -> String {
         "other"
     };
     class.to_string()
+}
+
+fn is_pseudo_filesystem(fstype: &str, mountpoint: &str, container_root: bool) -> bool {
+    matches!(
+        fstype,
+        "tmpfs"
+            | "devtmpfs"
+            | "squashfs"
+            | "proc"
+            | "sysfs"
+            | "cgroup"
+            | "cgroup2"
+            | "devpts"
+            | "securityfs"
+            | "pstore"
+            | "bpf"
+            | "tracefs"
+            | "debugfs"
+            | "hugetlbfs"
+            | "mqueue"
+            | "fusectl"
+            | "configfs"
+    ) || (fstype == "overlay" && !(container_root && mountpoint == "/"))
+}
+
+fn first_lines(output: &str, limit: usize) -> Vec<String> {
+    output.lines().take(limit).map(str::to_string).collect()
 }
 
 fn normalize_service_key(name: &str) -> String {
@@ -832,8 +910,8 @@ fn normalize_service_key(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        attach_ports, parse_openrc_output, parse_services_output, parse_ss_output,
-        parse_systemctl_plain,
+        attach_ports, classify_service, parse_openrc_output, parse_services_output,
+        parse_ss_output, parse_systemctl_plain,
     };
 
     #[test]
@@ -907,6 +985,29 @@ mod tests {
         assert_eq!(apparmor.sub_state, "exited");
         assert!(!apparmor.running);
         assert!(!apparmor.failed);
+    }
+
+    #[test]
+    fn fedora_systemctl_services_parse_and_fwupd_is_system() {
+        let services = parse_systemctl_plain(
+            "NetworkManager.service loaded active running Network Manager\n\
+             dbus-broker.service loaded active running D-Bus System Message Bus\n\
+             sshd.service loaded active running OpenSSH server daemon\n\
+             qemu-guest-agent.service loaded active running QEMU Guest Agent\n\
+             fwupd.service loaded inactive dead Firmware update daemon\n",
+        );
+        assert_eq!(services.len(), 5);
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "sshd.service" && svc.running)
+        );
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "NetworkManager.service" && svc.running)
+        );
+        assert_eq!(classify_service("fwupd.service"), "system");
     }
 
     #[test]

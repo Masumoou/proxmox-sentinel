@@ -77,11 +77,26 @@
       {#if !ceph?.installed}
         <div class="hint">Ceph command unavailable or not configured.</div>
       {:else}
-        <div class="health-row" class:bad={ceph.health !== 'HEALTH_OK'}>
-          <b>{ceph.health}</b>
-          <span>OSD {ceph.osd_up ?? '--'}/{ceph.osd_total ?? '--'}</span>
-          <span>MON {ceph.mons?.join(', ') || '--'}</span>
-          <small>{ceph.detail || 'no detail'}</small>
+        <div class="ceph-card" class:bad={ceph.health !== 'HEALTH_OK'}>
+          <div class="ceph-summary">
+            <b>{ceph.health}</b>
+            <span>OSD {ceph.osd_up ?? '--'}/{ceph.osd_total ?? '--'}</span>
+            <span>MON {ceph.mons?.join(', ') || '--'}</span>
+          </div>
+          {#if (ceph.warnings || []).length > 0}
+            <div class="ceph-warnings">
+              {#each ceph.warnings as warning}
+                <div class="ceph-warning">
+                  <strong>{warning.name}</strong>
+                  <span>{warning.severity}</span>
+                  <p>{warning.message || ceph.detail}</p>
+                  {#if warning.detail}<small>{warning.detail}</small>{/if}
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="ceph-ok">{ceph.detail || 'No Ceph warnings reported.'}</p>
+          {/if}
         </div>
       {/if}
     </div>
@@ -126,6 +141,15 @@
   .health-row span { color: var(--text-secondary); }
   .pool-card { min-height: 174px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
   .pool-card.inactive { border-color: rgba(255,51,85,0.35); }
+  .ceph-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; background: rgba(255,255,255,0.025); }
+  .ceph-card.bad { border-color: rgba(255,140,0,0.42); background: rgba(255,140,0,0.055); }
+  .ceph-summary { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; color: var(--text-secondary); font-size: 0.78rem; }
+  .ceph-summary b { color: var(--text-primary); }
+  .ceph-warnings { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .ceph-warning { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 9px; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
+  .ceph-warning strong { color: var(--accent-orange); }
+  .ceph-warning span { color: var(--text-secondary); text-transform: uppercase; font-size: 0.68rem; }
+  .ceph-warning p, .ceph-warning small, .ceph-ok { grid-column: 1 / -1; color: var(--text-secondary); font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; }
   .pool-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
   h3 { font-size: 1rem; overflow-wrap: anywhere; }
   p, small, .content, .hint, .empty { color: var(--text-secondary); }

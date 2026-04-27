@@ -450,10 +450,7 @@ impl LxcCollector {
             }
             let fstype = parts[1];
             // Skip pseudo filesystems
-            if matches!(
-                fstype,
-                "tmpfs" | "devtmpfs" | "proc" | "sysfs" | "devpts" | "cgroup2"
-            ) {
+            if is_pseudo_filesystem(fstype, parts[6]) {
                 continue;
             }
             let total: u64 = parts[2].parse().unwrap_or(0);
@@ -754,7 +751,18 @@ fn classify_service(name: &str) -> String {
     } else if key.starts_with("systemd-")
         || matches!(
             key.as_str(),
-            "dbus" | "cron" | "rsyslog" | "qemu-guest-agent"
+            "dbus"
+                | "dbus-broker"
+                | "cron"
+                | "crond"
+                | "rsyslog"
+                | "qemu-guest-agent"
+                | "fwupd"
+                | "fwupd-refresh"
+                | "getty"
+                | "serial-getty"
+                | "chronyd"
+                | "networkmanager"
         )
     {
         "system"
@@ -762,6 +770,29 @@ fn classify_service(name: &str) -> String {
         "other"
     };
     class.to_string()
+}
+
+fn is_pseudo_filesystem(fstype: &str, mountpoint: &str) -> bool {
+    matches!(
+        fstype,
+        "tmpfs"
+            | "devtmpfs"
+            | "squashfs"
+            | "proc"
+            | "sysfs"
+            | "cgroup"
+            | "cgroup2"
+            | "devpts"
+            | "securityfs"
+            | "pstore"
+            | "bpf"
+            | "tracefs"
+            | "debugfs"
+            | "hugetlbfs"
+            | "mqueue"
+            | "fusectl"
+            | "configfs"
+    ) || (fstype == "overlay" && mountpoint != "/")
 }
 
 fn normalize_service_key(name: &str) -> String {

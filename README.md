@@ -324,7 +324,19 @@ Guest exec uses the Proxmox-supported JSON array form:
 
 If guest exec fails, Sentinel keeps `agent=true` when ping/native endpoints still work, keeps showing OS/IP/mounts, logs `guest-agent exec_error`, and reports zero services until the exec permission or command issue is fixed.
 
-Service discovery collects all units reported by the guest, not a hardcoded list. Each service keeps its name, load state, active state, sub-state, description, running/failed flags, display classification, and listening ports when `ss -lntup` is available. Classification is only used to sort the compact dashboard preview so failed services and application services such as `apache2`, `php8.3-fpm`, `postgresql`, `redis`, `haproxy`, and `ssh` appear before noisy system units. The full guest detail table keeps every discovered service.
+Service discovery collects all units reported by the guest, not a hardcoded list. Each service keeps its name, load state, active state, sub-state, description, running/failed flags, display classification, and listening ports when `ss -lntup` is available. Classification is only used to sort the compact dashboard preview so failed services and application services such as `apache2`, `php8.3-fpm`, `postgresql`, `redis`, `haproxy`, and `ssh` appear before noisy system units. Low-value system services such as `fwupd` are collected but are not critical by default. The full guest detail table keeps every discovered service.
+
+Default service alerts are quiet:
+
+```toml
+[services]
+critical_patterns = []
+auto_watch_running_services = false
+alert_on_previously_running_down = false
+alert_on_discovered = false # deprecated compatibility flag; ignored in v0.2.20+
+```
+
+Sentinel only fires service-down alerts for explicit `[[services.vm]]` / `[[services.lxc]]` checks, user-defined `critical_patterns`, or `[[alert_rules]]`.
 
 The daemon still runs as root on the Proxmox host for local cgroup, LXC, and log access.
 
@@ -341,6 +353,7 @@ lxc
 guest
 service
 storage
+guest_disk
 ```
 
 Supported operators:
@@ -409,7 +422,20 @@ operator = ">"
 threshold = 85
 duration_secs = 300
 severity = "warning"
+
+[[alert_rules]]
+name = "vm-104-root-disk-high"
+target = "guest_disk"
+vmid = 104
+mount = "/"
+metric = "used_percent"
+operator = ">"
+threshold = 85
+duration_secs = 300
+severity = "warning"
 ```
+
+Dashboard-created custom rules are stored in SQLite and merged with config rules at runtime. Config rules show as read-only in the Alerts page; UI rules can be created, edited, deleted, and test-evaluated against the latest telemetry.
 
 Service rules support these conditions:
 
@@ -575,6 +601,7 @@ Available when QEMU Guest Agent responds:
 - IP addresses
 - OS information where exposed
 - filesystem/mount details
+- guest disk summary for dashboard gauges and guest tables
 - guest command execution for full service inventory, failed service checks, listening ports, and process checks
 
 Available when SSH fallback is configured:

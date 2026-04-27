@@ -496,7 +496,7 @@ pub struct BackupTagRule {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AlertRuleConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -511,6 +511,8 @@ pub struct AlertRuleConfig {
     #[serde(default)]
     pub service: Option<String>,
     #[serde(default)]
+    pub mount: Option<String>,
+    #[serde(default)]
     pub metric: Option<String>,
     #[serde(default)]
     pub operator: Option<String>,
@@ -520,6 +522,10 @@ pub struct AlertRuleConfig {
     pub value: Option<String>,
     #[serde(default)]
     pub condition: Option<String>,
+    #[serde(default)]
+    pub notification_channel: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
     #[serde(default = "default_alert_rule_duration")]
     pub duration_secs: u64,
     #[serde(default = "default_severity")]
@@ -534,7 +540,7 @@ impl AlertRuleConfig {
         let target = self.target.to_lowercase();
         if !matches!(
             target.as_str(),
-            "node" | "vm" | "lxc" | "guest" | "service" | "storage"
+            "node" | "vm" | "lxc" | "guest" | "service" | "storage" | "guest_disk"
         ) {
             anyhow::bail!(
                 "alert_rules.{} target '{}' is unsupported",
@@ -547,6 +553,9 @@ impl AlertRuleConfig {
         }
         if target == "service" && self.service.is_none() {
             anyhow::bail!("alert_rules.{} requires service", self.name);
+        }
+        if target == "guest_disk" && self.vmid.is_none() {
+            anyhow::bail!("alert_rules.{} requires vmid", self.name);
         }
         if let Some(condition) = self.condition.as_deref().map(str::to_ascii_lowercase) {
             if !matches!(
@@ -744,6 +753,12 @@ pub struct ServicesConfig {
     #[serde(default = "default_alert_on_discovered_services")]
     pub alert_on_discovered: bool,
     #[serde(default)]
+    pub critical_patterns: Vec<String>,
+    #[serde(default)]
+    pub auto_watch_running_services: bool,
+    #[serde(default)]
+    pub alert_on_previously_running_down: bool,
+    #[serde(default)]
     pub lxc: Vec<LxcServiceChecks>,
     #[serde(default)]
     #[allow(dead_code)]
@@ -755,6 +770,9 @@ impl Default for ServicesConfig {
         Self {
             auto_discover: default_service_auto_discovery(),
             alert_on_discovered: default_alert_on_discovered_services(),
+            critical_patterns: vec![],
+            auto_watch_running_services: false,
+            alert_on_previously_running_down: false,
             lxc: vec![],
             vm: vec![],
         }
@@ -765,7 +783,7 @@ fn default_service_auto_discovery() -> bool {
     true
 }
 fn default_alert_on_discovered_services() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, Deserialize)]

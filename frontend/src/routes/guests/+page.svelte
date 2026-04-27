@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     enrichedGuests,
+    diskSummaryLabel,
     formatBytes,
     isApplicationService,
     isServiceFailed,
@@ -115,7 +116,7 @@
   {:else}
     <div class="table">
       <div class="table-head">
-        <span>ID</span><span>Name</span><span>Type</span><span>OS</span><span>Node</span><span>IP</span><span>Status</span><span>CPU</span><span>RAM</span><span>Services</span><span>Visibility</span><span>Action</span>
+        <span>ID</span><span>Name</span><span>Type</span><span>OS</span><span>Node</span><span>IP</span><span>Status</span><span>CPU</span><span>RAM</span><span>Storage</span><span>Services</span><span>Visibility</span><span>Action</span>
       </div>
       {#each filteredGuests as guest (guest.vmid)}
         <div class="row" class:stopped={guest.status !== 'running'}>
@@ -128,6 +129,7 @@
           <span class:ok={guest.status === 'running'} class:bad={guest.status !== 'running'}>{guest.status}</span>
           <span>{(guest.cpu * 100).toFixed(1)}% <small>{guest.maxcpu ? `${guest.maxcpu} vCPU` : ''}</small></span>
           <span>{formatBytes(guest.mem)} <small>{Math.round(pct(guest.mem, guest.maxmem))}%</small></span>
+          <span class:bad={(guest.disk_summary?.max_mount_pct || 0) > 90}>{guest.disk_summary?.available ? diskSummaryLabel(guest.disk_summary) : 'unavailable'}</span>
           <span class:bad={(guest.service_failed || 0) > 0}>{serviceCount(guest)}</span>
           <span class:bad={visibility(guest) === 'none'}>{visibility(guest)}</span>
           <span>
@@ -205,7 +207,7 @@
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   .link-button { min-width: 76px; padding: 6px 8px; }
   .table { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); }
-  .table-head, .row { min-width: 1440px; display: grid; grid-template-columns: 70px 1.5fr 80px 180px 120px 150px 100px 90px 130px 130px 100px 90px; gap: 12px; align-items: center; padding: 10px 14px; }
+  .table-head, .row { min-width: 1580px; display: grid; grid-template-columns: 70px 1.5fr 80px 180px 120px 150px 100px 90px 130px 180px 130px 100px 90px; gap: 12px; align-items: center; padding: 10px 14px; }
   .table-head { color: var(--text-secondary); font-size: 0.6rem; letter-spacing: 2px; text-transform: uppercase; border-bottom: 1px solid var(--border-color); }
   .row { min-height: 48px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.78rem; }
   .row:hover { background: rgba(0,212,255,0.04); }
@@ -216,7 +218,7 @@
   b { color: var(--accent-cyan); font-size: 0.65rem; background: rgba(0,212,255,0.1); padding: 2px 6px; border-radius: 4px; }
   .ok { color: var(--accent-green); }
   .bad { color: var(--accent-red); }
-  .service-row, .hint-row, .service-detail { min-width: 1440px; padding: 8px 14px 10px 84px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .service-row, .hint-row, .service-detail { min-width: 1580px; padding: 8px 14px 10px 84px; border-bottom: 1px solid rgba(255,255,255,0.04); }
   .service-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .service-chip { font-size: 0.65rem; color: var(--accent-green); border: 1px solid rgba(0,255,136,0.18); background: rgba(0,255,136,0.08); border-radius: 4px; padding: 3px 7px; }
   .service-chip.down { color: var(--accent-red); border-color: rgba(255,51,85,0.22); background: rgba(255,51,85,0.08); }

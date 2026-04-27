@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     enrichedGuests,
+    diskSummaryLabel,
     formatBytes,
     haproxyStats,
     isServiceFailed,
@@ -104,7 +105,7 @@
 <div class="dashboard-page">
   <header class="dash-header">
     <div>
-      <div class="eyebrow">PROXMOX SENTINEL v0.2.19</div>
+      <div class="eyebrow">PROXMOX SENTINEL v0.2.20</div>
       <h1>Cluster Overview</h1>
     </div>
     <div class="header-actions">
@@ -192,11 +193,17 @@
                 <div class="mini-gauge" style={gaugeStyle(pct(guest.mem, guest.maxmem), 'var(--accent-cyan)')}>
                   <div><strong>{Math.round(pct(guest.mem, guest.maxmem))}%</strong><span>{formatBytes(guest.mem)}</span></div>
                 </div>
+                <div class="mini-gauge" style={gaugeStyle(guest.disk_summary?.available ? (guest.disk_summary.root_used_pct ?? guest.disk_summary.used_pct) : 0, 'var(--accent-orange)')}>
+                  <div><strong>{guest.disk_summary?.available ? `${Math.round(guest.disk_summary.root_used_pct ?? guest.disk_summary.used_pct)}%` : '--'}</strong><span>DISK</span></div>
+                </div>
               </div>
 
               <div class="guest-footer">
                 <span class:ok={guest.status === 'running'} class:bad={guest.status !== 'running'}>{guest.status.toUpperCase()}</span>
                 <span>{serviceSummary(guest)}</span>
+              </div>
+              <div class="disk-line" class:muted={!guest.disk_summary?.available}>
+                {guest.disk_summary?.available ? diskSummaryLabel(guest.disk_summary) : 'storage unavailable, requires agent/SSH'}
               </div>
 
               <div class="card-services">
@@ -216,7 +223,7 @@
       <div class="panel-title"><span>Operational Notes</span></div>
       <div class="note-list">
         {#if $enrichedGuests.some((g) => g.type === 'QEMU' && g.status === 'running' && !g.agent && !g.ssh)}
-          <div class="note warn">Some VMs have no QEMU Guest Agent or SSH visibility, so IPs, disks, and services are limited.</div>
+          <div class="note warn">Some VMs have no QEMU Guest Agent or SSH visibility. Enable QEMU Guest Agent or configure SSH to show OS, IP, disks, and services.</div>
         {/if}
         {#if !$haproxyStats}
           <div class="note">HAProxy needs `[haproxy] enabled = true` and a reachable stats CSV URL.</div>
@@ -224,11 +231,11 @@
           <div class="note ok">HAProxy telemetry is live: {$haproxyStats.servers_up} up, {$haproxyStats.servers_down} down.</div>
         {/if}
         {#if platformIssues > 0}
-          <div class="note warn">Platform health reports {platformIssues} issue{platformIssues === 1 ? '' : 's'} across backups, storage, snapshots, security, certificates, or guest agents.</div>
+          <div class="note warn">Platform health has {platformIssues} issue{platformIssues === 1 ? '' : 's'}. Open Storage, Backups, Security, or Alerts to review backup, storage, snapshot, security, certificate, and guest-agent items.</div>
         {:else}
           <div class="note ok">Platform health is clean from the latest collector run.</div>
         {/if}
-        <div class="note">Storage pools now come from Proxmox API. Guest mount data still requires guest agent/SSH.</div>
+        <div class="note">Storage pools come from the Proxmox API. Guest filesystem usage requires QEMU Guest Agent or SSH.</div>
       </div>
     </aside>
   </section>
@@ -283,18 +290,20 @@
   .panel { padding: 16px; min-width: 0; }
   .panel-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; color: var(--text-primary); font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; font-size: 0.72rem; }
   .guest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-  .guest-card { height: 252px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
+  .guest-card { height: 282px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
   .guest-card.stopped { opacity: 0.62; }
   .guest-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; min-height: 58px; }
   .guest-head h2 { font-size: 1rem; line-height: 1.2; overflow-wrap: anywhere; }
   .guest-head p { font-size: 0.65rem; margin-top: 4px; }
   .type-badge { flex: 0 1 130px; max-width: 130px; color: var(--accent-cyan); background: rgba(0, 212, 255, 0.1); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 4px; padding: 3px 7px; font-size: 0.58rem; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-  .metric-strip { display: flex; gap: 14px; align-items: center; }
-  .mini-gauge { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; }
-  .mini-gauge > div { width: 54px; height: 54px; border-radius: 50%; background: var(--card-bg); display: grid; place-items: center; text-align: center; }
-  .mini-gauge strong { font-size: 0.76rem; line-height: 1; max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .metric-strip { display: flex; gap: 10px; align-items: center; }
+  .mini-gauge { width: 66px; height: 66px; border-radius: 50%; display: grid; place-items: center; flex: 0 0 auto; }
+  .mini-gauge > div { width: 50px; height: 50px; border-radius: 50%; background: var(--card-bg); display: grid; place-items: center; text-align: center; }
+  .mini-gauge strong { font-size: 0.72rem; line-height: 1; max-width: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mini-gauge span { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 0.52rem; letter-spacing: 1.5px; }
   .guest-footer { display: flex; justify-content: space-between; gap: 10px; font-size: 0.64rem; letter-spacing: 0.8px; border-top: 1px solid rgba(255,255,255,0.04); padding-top: 10px; }
+  .disk-line { color: var(--text-secondary); font-size: 0.68rem; line-height: 1.25; }
+  .disk-line.muted { color: var(--text-dim); }
   .card-services { min-height: 24px; display: flex; flex-wrap: wrap; gap: 5px; overflow: hidden; }
   .card-services span { color: var(--accent-green); border: 1px solid rgba(0,255,136,0.16); background: rgba(0,255,136,0.07); border-radius: 4px; padding: 3px 6px; font-size: 0.58rem; max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .card-services span.down { color: var(--accent-red); border-color: rgba(255,51,85,0.22); background: rgba(255,51,85,0.08); }

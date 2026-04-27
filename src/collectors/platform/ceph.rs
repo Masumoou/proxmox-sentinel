@@ -10,6 +10,7 @@ pub(super) async fn collect_ceph(alerts: &mut Vec<Alert>) -> CephHealth {
             osd_up: None,
             osd_total: None,
             mons: vec![],
+            warnings: vec![],
         };
     };
     let health = parse_ceph_json(&out);
@@ -49,13 +50,17 @@ pub(super) fn parse_ceph_json(out: &str) -> CephHealth {
     let osd_total = value
         .pointer("/osdmap/osdmap/num_osds")
         .and_then(Value::as_u64);
+    let warnings = parse_ceph_warnings(&value);
+    let detail = warnings
+        .iter()
+        .map(|warning| format!("{}: {}", warning.name, warning.message))
+        .collect::<Vec<_>>()
+        .join("; ");
+
     CephHealth {
         installed: true,
         health,
-        detail: value
-            .pointer("/health/checks")
-            .map(Value::to_string)
-            .unwrap_or_default(),
+        detail,
         osd_up,
         osd_total,
         mons: value
@@ -67,5 +72,50 @@ pub(super) fn parse_ceph_json(out: &str) -> CephHealth {
                     .collect()
             })
             .unwrap_or_default(),
+        warnings,
     }
+}
+
+fn parse_ceph_warnings(value: &Value) -> Vec<CephWarning> {
+    let Some(checks) = value.pointer("/health/checks").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    checks
+        .iter()
+        .map(|(name, check)| {
+            let severity = check
+                .get("severity")
+                .and_then(Value::as_str)
+                .unwrap_or("warning")
+                .to_string();
+            let summary = check
+                .get("summary")
+                .and_then(Value::as_object)
+                .and_then(|summary| summary.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let detail = check
+                .get("detail")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| {
+                            item.get("message")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .unwrap_or_default();
+            CephWarning {
+                name: name.clone(),
+                severity,
+                message: summary,
+                detail,
+            }
+        })
+        .collect()
 }

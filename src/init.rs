@@ -69,7 +69,10 @@ service_check_interval_secs = 60
 
 [services]
 auto_discover = true
-alert_on_discovered = true
+critical_patterns = []
+auto_watch_running_services = false
+alert_on_previously_running_down = false
+alert_on_discovered = false
 
 [haproxy]
 enabled = false

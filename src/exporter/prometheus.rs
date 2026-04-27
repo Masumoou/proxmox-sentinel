@@ -12,7 +12,7 @@ use axum::{
     http::{HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use base64::prelude::*;
 use mime_guess::from_path;
@@ -27,6 +27,7 @@ use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::collectors::lxc::LxcDetailedStats;
+use crate::config::AlertRuleConfig;
 use crate::proxmox_api::{GuestKind, GuestStatus, NodeStatus, StorageStatus};
 
 #[derive(RustEmbed)]
@@ -634,6 +635,7 @@ pub struct MetricsServer {
     pub auth: Option<String>,
     pub storage: Option<std::sync::Arc<crate::storage::Storage>>,
     pub prometheus_enabled: bool,
+    pub config_alert_rules: Vec<AlertRuleConfig>,
 }
 
 #[derive(Clone)]
@@ -641,6 +643,7 @@ struct AppState {
     tx: broadcast::Sender<String>,
     expected_auth: Option<String>, // "Basic <base64>"
     storage: Option<std::sync::Arc<crate::storage::Storage>>,
+    config_alert_rules: Vec<AlertRuleConfig>,
 }
 
 impl MetricsServer {
@@ -652,6 +655,7 @@ impl MetricsServer {
         hub_state: Option<crate::cluster::HubState>,
         auth: Option<String>,
         prometheus_enabled: bool,
+        config_alert_rules: Vec<AlertRuleConfig>,
     ) -> Self {
         Self {
             addr: format!("{}:{}", addr, port),
@@ -660,6 +664,7 @@ impl MetricsServer {
             auth,
             storage,
             prometheus_enabled,
+            config_alert_rules,
         }
     }
 
@@ -676,12 +681,21 @@ impl MetricsServer {
             tx: self.tx,
             expected_auth,
             storage: self.storage,
+            config_alert_rules: self.config_alert_rules,
         };
 
         let mut protected = Router::new()
             .route("/api/status", get(status_handler))
             .route("/api/v1/alerts/test", post(test_alert_handler))
             .route("/api/v1/alerts/recent", get(recent_alerts_handler))
+            .route(
+                "/api/v1/alert-rules",
+                get(alert_rules_handler).post(create_alert_rule_handler),
+            )
+            .route(
+                "/api/v1/alert-rules/{id}",
+                put(update_alert_rule_handler).delete(delete_alert_rule_handler),
+            )
             .route(
                 "/api/v1/history/node/{node}/metrics",
                 get(node_history_handler),
@@ -769,6 +783,79 @@ async fn recent_alerts_handler(State(state): State<AppState>) -> impl IntoRespon
         match storage.query_recent_alerts(50) {
             Ok(alerts) => (StatusCode::OK, Json(serde_json::json!(alerts))).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "No storage configured").into_response()
+    }
+}
+
+async fn alert_rules_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let mut rules = Vec::new();
+    for (idx, rule) in state.config_alert_rules.iter().enumerate() {
+        match serde_json::to_value(rule) {
+            Ok(mut value) => {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("id".to_string(), serde_json::json!(format!("config-{idx}")));
+                    obj.insert("source".to_string(), serde_json::json!("config"));
+                    obj.insert("readonly".to_string(), serde_json::json!(true));
+                }
+                rules.push(value);
+            }
+            Err(e) => tracing::warn!("Could not serialize config alert rule: {e}"),
+        }
+    }
+
+    if let Some(ref storage) = state.storage {
+        match storage.query_ui_alert_rules() {
+            Ok(mut ui_rules) => rules.append(&mut ui_rules),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!(rules))).into_response()
+}
+
+async fn create_alert_rule_handler(
+    State(state): State<AppState>,
+    Json(rule): Json<AlertRuleConfig>,
+) -> impl IntoResponse {
+    if let Some(ref storage) = state.storage {
+        match storage.insert_ui_alert_rule(&rule) {
+            Ok(id) => (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "id": id, "source": "ui" })),
+            )
+                .into_response(),
+            Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "No storage configured").into_response()
+    }
+}
+
+async fn update_alert_rule_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(rule): Json<AlertRuleConfig>,
+) -> impl IntoResponse {
+    if let Some(ref storage) = state.storage {
+        match storage.update_ui_alert_rule(id, &rule) {
+            Ok(()) => (StatusCode::OK, "updated").into_response(),
+            Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "No storage configured").into_response()
+    }
+}
+
+async fn delete_alert_rule_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> impl IntoResponse {
+    if let Some(ref storage) = state.storage {
+        match storage.delete_ui_alert_rule(id) {
+            Ok(()) => (StatusCode::OK, "deleted").into_response(),
+            Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
         }
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, "No storage configured").into_response()
