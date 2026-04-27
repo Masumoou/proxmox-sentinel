@@ -53,6 +53,7 @@ webhook_url = ""
 cpu_threshold = 90.0
 memory_threshold = 85.0
 disk_threshold = 90.0
+ignore_template_guests = true
 
 [ssh]
 private_key_path = "/root/.ssh/id_ed25519"

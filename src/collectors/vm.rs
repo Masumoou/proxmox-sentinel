@@ -39,6 +39,12 @@ pub struct VmService {
     pub name: String,
     pub active: bool,
     pub status: String,
+    pub load: String,
+    pub state: String,
+    pub sub_state: String,
+    pub description: String,
+    pub running: bool,
+    pub failed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -180,7 +186,7 @@ impl<'a> VmCollector<'a> {
             .unwrap_or_default();
 
         if mounts.is_empty() {
-            let fs_json = self
+            match self
                 .client
                 .vm_agent_exec_shell(
                     node,
@@ -188,13 +194,14 @@ impl<'a> VmCollector<'a> {
                     "df --output=source,fstype,size,used,avail,pcent,target -k --block-size=1 --no-sync",
                 )
                 .await
-                .unwrap_or_default();
-
-            mounts = parse_df_output(&fs_json);
+            {
+                Ok(fs_json) => mounts = parse_df_output(&fs_json),
+                Err(e) => warn!("VM {vmid} guest-agent exec_error df: {e}"),
+            }
         }
 
         // Get process list via agent exec
-        let ps_json = self
+        let ps_json = match self
             .client
             .vm_agent_exec_shell(
                 node,
@@ -202,29 +209,47 @@ impl<'a> VmCollector<'a> {
                 "ps -eo pid,comm,pcpu,rss --no-headers --sort=-pcpu",
             )
             .await
-            .unwrap_or_default();
+        {
+            Ok(output) => output,
+            Err(e) => {
+                warn!("VM {vmid} guest-agent exec_error ps: {e}");
+                String::new()
+            }
+        };
 
         let processes = parse_ps_output(&ps_json);
 
         // Service discovery through QEMU Guest Agent keeps VM monitoring agentless:
         // no Sentinel sidecar inside the VM and no SSH key requirement.
-        let svc_json = self
+        let svc_json = match self
             .client
             .vm_agent_exec_shell(
                 node,
                 vmid,
-                "systemctl list-units --type=service --all --no-pager --no-legend --output=json 2>/dev/null || systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null || rc-status --nocolor 2>/dev/null || true",
+                "systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null || rc-status --nocolor 2>/dev/null || true",
             )
             .await
-            .unwrap_or_default();
+        {
+            Ok(output) => output,
+            Err(e) => {
+                warn!("VM {vmid} guest-agent exec_error services: {e}");
+                String::new()
+            }
+        };
         let services = parse_services_output(&svc_json);
 
         if os_name.is_none() || os_version.is_none() {
-            let os_release = self
+            let os_release = match self
                 .client
                 .vm_agent_exec_shell(node, vmid, "cat /etc/os-release 2>/dev/null || true")
                 .await
-                .unwrap_or_default();
+            {
+                Ok(output) => output,
+                Err(e) => {
+                    warn!("VM {vmid} guest-agent exec_error os-release: {e}");
+                    String::new()
+                }
+            };
             let (release_name, release_version) = parse_os_release(&os_release);
             if os_name.is_none() {
                 os_name = release_name;
@@ -288,11 +313,7 @@ impl<'a> VmCollector<'a> {
                     &format!("systemctl is-active {} 2>/dev/null || echo unknown", name),
                 )?;
                 let status = output.trim().to_string();
-                services.push(VmService {
-                    name: name.clone(),
-                    active: status == "active",
-                    status,
-                });
+                services.push(vm_service_from_parts(name, "", &status, &status, ""));
             }
             Ok(services)
         })
@@ -533,18 +554,18 @@ fn parse_systemctl_json(output: &str) -> Vec<VmService> {
     #[derive(serde::Deserialize)]
     struct Unit {
         unit: String,
+        #[serde(default)]
+        load: String,
         active: String,
         sub: String,
+        #[serde(default)]
+        description: String,
     }
 
     serde_json::from_str::<Vec<Unit>>(output)
         .unwrap_or_default()
         .into_iter()
-        .map(|u| VmService {
-            name: u.unit,
-            active: u.active == "active",
-            status: u.sub,
-        })
+        .map(|u| vm_service_from_parts(&u.unit, &u.load, &u.active, &u.sub, &u.description))
         .collect()
 }
 
@@ -562,11 +583,7 @@ fn parse_openrc_output(output: &str) -> Vec<VmService> {
             if name.is_empty() {
                 return None;
             }
-            Some(VmService {
-                name,
-                active: state == "started",
-                status: state,
-            })
+            Some(vm_service_from_parts(&name, "", &state, &state, ""))
         })
         .collect()
 }
@@ -583,13 +600,42 @@ fn parse_systemctl_plain(output: &str) -> Vec<VmService> {
             if parts.len() < 4 || !parts[0].ends_with(".service") {
                 return None;
             }
-            Some(VmService {
-                name: parts[0].to_string(),
-                active: parts[2] == "active",
-                status: parts[3].to_string(),
-            })
+            let description = parts.get(4..).map(|p| p.join(" ")).unwrap_or_default();
+            Some(vm_service_from_parts(
+                parts[0],
+                parts[1],
+                parts[2],
+                parts[3],
+                &description,
+            ))
         })
         .collect()
+}
+
+fn vm_service_from_parts(
+    name: &str,
+    load: &str,
+    state: &str,
+    sub_state: &str,
+    description: &str,
+) -> VmService {
+    let state = state.trim().to_ascii_lowercase();
+    let sub_state = sub_state.trim().to_ascii_lowercase();
+    let running = matches!(state.as_str(), "active" | "started")
+        && matches!(sub_state.as_str(), "running" | "started" | "active");
+    let failed = state == "failed" || sub_state == "failed";
+
+    VmService {
+        name: name.to_string(),
+        active: running,
+        status: sub_state.clone(),
+        load: load.to_string(),
+        state,
+        sub_state,
+        description: description.to_string(),
+        running,
+        failed,
+    }
 }
 
 #[cfg(test)]
@@ -639,6 +685,34 @@ mod tests {
                 .iter()
                 .any(|svc| svc.name == "mariadb.service" && !svc.active && svc.status == "dead")
         );
+    }
+
+    #[test]
+    fn parses_real_qemu_agent_plain_services() {
+        let services = parse_systemctl_plain(
+            "apache2.service loaded active running The Apache HTTP Server\napparmor.service loaded active exited Load AppArmor profiles\ncron.service loaded active running Regular background program processing daemon\n",
+        );
+        assert_eq!(services.len(), 3);
+
+        let apache = services
+            .iter()
+            .find(|svc| svc.name == "apache2.service")
+            .expect("apache service");
+        assert_eq!(apache.load, "loaded");
+        assert_eq!(apache.state, "active");
+        assert_eq!(apache.sub_state, "running");
+        assert_eq!(apache.description, "The Apache HTTP Server");
+        assert!(apache.running);
+        assert!(apache.active);
+
+        let apparmor = services
+            .iter()
+            .find(|svc| svc.name == "apparmor.service")
+            .expect("apparmor service");
+        assert_eq!(apparmor.state, "active");
+        assert_eq!(apparmor.sub_state, "exited");
+        assert!(!apparmor.running);
+        assert!(!apparmor.failed);
     }
 
     #[test]

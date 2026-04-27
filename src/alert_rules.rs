@@ -32,10 +32,7 @@ impl ServiceRuleState {
 
     pub fn running(&self) -> bool {
         matches!(self.state.as_str(), "active" | "running" | "started")
-            && !matches!(
-                self.sub_state.as_str(),
-                "failed" | "dead" | "inactive" | "unknown" | "missing"
-            )
+            && matches!(self.sub_state.as_str(), "running" | "started" | "active")
     }
 
     pub fn failed(&self) -> bool {

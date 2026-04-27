@@ -479,11 +479,13 @@ impl AlertDispatcher {
         let mut alerts = Vec::new();
 
         if g.status != "running" {
-            alerts.push(Alert::GuestDown {
-                vmid: g.vmid,
-                name: g.name.clone(),
-                node: g.node.clone(),
-            });
+            if !(self.cfg.ignore_template_guests && g.template) {
+                alerts.push(Alert::GuestDown {
+                    vmid: g.vmid,
+                    name: g.name.clone(),
+                    node: g.node.clone(),
+                });
+            }
             return alerts; // no point checking resources if down
         }
 

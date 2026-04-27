@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.17
+
+- Fixed QEMU Guest Agent exec by sending Proxmox's required JSON array payload, parsing `pid`, polling `exec-status`, and honoring `exitcode`, `out-data`, and `err-data`.
+- Switched VM service discovery to plain `systemctl` output and preserved service load state, active state, sub-state, description, running, and failed flags.
+- Kept `agent=true` when native guest-agent endpoints work even if guest exec fails; exec failures are logged as `guest-agent exec_error`.
+- Added `[alerts].ignore_template_guests = true` by default so stopped templates no longer emit built-in critical `GuestDown` alerts.
+
 ## v0.2.16
 
 - Fixed QEMU Guest Agent method handling by using `POST` for `/agent/ping` and `/agent/exec`, while keeping native read endpoints on `GET`.

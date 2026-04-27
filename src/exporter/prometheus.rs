@@ -910,6 +910,7 @@ async fn test_alert_handler(Json(payload): Json<TestAlertRequest>) -> impl IntoR
             cpu_threshold: 100.0,
             memory_threshold: 100.0,
             disk_threshold: 100.0,
+            ignore_template_guests: true,
         },
         None,
     );

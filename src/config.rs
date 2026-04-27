@@ -195,6 +195,8 @@ pub struct AlertConfig {
     pub memory_threshold: f64,
     #[serde(default = "default_disk_threshold")]
     pub disk_threshold: f64,
+    #[serde(default = "default_true")]
+    pub ignore_template_guests: bool,
 }
 
 fn default_cpu_threshold() -> f64 {

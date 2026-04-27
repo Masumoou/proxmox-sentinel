@@ -208,6 +208,7 @@ webhook_url = ""
 cpu_threshold = 90.0
 memory_threshold = 85.0
 disk_threshold = 90.0
+ignore_template_guests = true
 
 [ssh]
 private_key_path = "/root/.ssh/id_ed25519"
@@ -314,6 +315,14 @@ SDN.Audit      # only if SDN features are used
 ```
 
 Sentinel uses Proxmox's method map correctly: `POST` for `/agent/ping` and `/agent/exec`, and `GET` for `/agent/get-osinfo`, `/agent/network-get-interfaces`, `/agent/get-fsinfo`, and `/agent/exec-status`.
+
+Guest exec uses the Proxmox-supported JSON array form:
+
+```json
+{"command":["/bin/sh","-lc","systemctl list-units --type=service --all --no-pager --no-legend --plain"]}
+```
+
+If guest exec fails, Sentinel keeps `agent=true` when ping/native endpoints still work, keeps showing OS/IP/mounts, logs `guest-agent exec_error`, and reports zero services until the exec permission or command issue is fixed.
 
 The daemon still runs as root on the Proxmox host for local cgroup, LXC, and log access.
 
@@ -470,6 +479,7 @@ Set:
 [alerts]
 enabled = true
 webhook_url = "https://your-webhook-endpoint.example"
+ignore_template_guests = true
 ```
 
 Test:

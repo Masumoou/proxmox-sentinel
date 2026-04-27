@@ -456,7 +456,7 @@ impl ProxmoxClient {
     /// Run a command inside a VM via QEMU guest agent
     #[allow(dead_code)]
     pub async fn vm_agent_exec(&self, node: &str, vmid: u32, cmd: &[&str]) -> Result<String> {
-        self.vm_agent_exec_command(node, vmid, cmd.join(" ")).await
+        self.vm_agent_exec_args(node, vmid, cmd).await
     }
 
     pub async fn vm_agent_exec_shell(
@@ -465,24 +465,21 @@ impl ProxmoxClient {
         vmid: u32,
         command: &str,
     ) -> Result<String> {
-        self.vm_agent_exec_command(node, vmid, format!("/bin/sh -lc {}", shell_quote(command)))
+        self.vm_agent_exec_args(node, vmid, &["/bin/sh", "-lc", command])
             .await
     }
 
-    async fn vm_agent_exec_command(
-        &self,
-        node: &str,
-        vmid: u32,
-        command: String,
-    ) -> Result<String> {
+    async fn vm_agent_exec_args(&self, node: &str, vmid: u32, command: &[&str]) -> Result<String> {
         #[derive(Serialize)]
         struct ExecReq {
-            command: String,
+            command: Vec<String>,
         }
         let resp: Value = self
             .post_json(
                 &format!("/nodes/{node}/qemu/{vmid}/agent/exec"),
-                &ExecReq { command },
+                &ExecReq {
+                    command: command.iter().map(|part| (*part).to_string()).collect(),
+                },
             )
             .await?;
         let pid = extract_agent_pid(&resp).context("agent exec response did not include pid")?;
@@ -495,8 +492,17 @@ impl ProxmoxClient {
                     "/nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}"
                 ))
                 .await?;
-            if agent_exec_exited(&status) {
-                return Ok(agent_exec_output(&status));
+            let exec_status = parse_agent_exec_status(&status);
+            if exec_status.exited {
+                if exec_status.exitcode.unwrap_or(0) == 0 {
+                    return Ok(exec_status.out_data);
+                }
+                anyhow::bail!(
+                    "agent-exec failed for vmid {vmid} with exitcode {:?}: stdout='{}' stderr='{}'",
+                    exec_status.exitcode,
+                    exec_status.out_data.trim(),
+                    exec_status.err_data.trim()
+                );
             }
         }
         anyhow::bail!("agent-exec timed out for vmid {vmid}")
@@ -643,6 +649,23 @@ fn extract_agent_pid(value: &Value) -> Option<u64> {
     agent_payload(value).get("pid").and_then(Value::as_u64)
 }
 
+struct AgentExecStatus {
+    exited: bool,
+    exitcode: Option<i64>,
+    out_data: String,
+    err_data: String,
+}
+
+fn parse_agent_exec_status(value: &Value) -> AgentExecStatus {
+    let payload = agent_payload(value);
+    AgentExecStatus {
+        exited: agent_exec_exited(payload),
+        exitcode: payload.get("exitcode").and_then(Value::as_i64),
+        out_data: agent_exec_output(payload, &["out-data", "out_data"]),
+        err_data: agent_exec_output(payload, &["err-data", "err_data"]),
+    }
+}
+
 fn agent_exec_exited(value: &Value) -> bool {
     let payload = agent_payload(value);
     payload.get("exited").is_some_and(|v| {
@@ -651,12 +674,10 @@ fn agent_exec_exited(value: &Value) -> bool {
     })
 }
 
-fn agent_exec_output(value: &Value) -> String {
+fn agent_exec_output(value: &Value, keys: &[&str]) -> String {
     let payload = agent_payload(value);
-    payload
-        .get("out-data")
-        .or_else(|| payload.get("out_data"))
-        .and_then(Value::as_str)
+    keys.iter()
+        .find_map(|key| payload.get(*key).and_then(Value::as_str))
         .unwrap_or("")
         .to_string()
 }
@@ -725,14 +746,10 @@ fn extract_version_after(text: &str, marker: &str) -> Option<String> {
     }
 }
 
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_exec_exited, agent_exec_output, agent_payload, extract_agent_pid,
+        agent_exec_exited, agent_payload, extract_agent_pid, parse_agent_exec_status,
         parse_guest_agent_fs_info, parse_guest_agent_os_info,
     };
     use serde_json::json;
@@ -780,6 +797,12 @@ mod tests {
     }
 
     #[test]
+    fn extracts_qemu_agent_exec_pid_from_direct_payload() {
+        let payload = json!({ "pid": 1573 });
+        assert_eq!(extract_agent_pid(&payload), Some(1573));
+    }
+
+    #[test]
     fn parses_qemu_agent_exec_status_result() {
         let payload = json!({
             "result": {
@@ -788,6 +811,39 @@ mod tests {
             }
         });
         assert!(agent_exec_exited(&payload));
-        assert_eq!(agent_exec_output(&payload), "ok");
+        let status = parse_agent_exec_status(&payload);
+        assert!(status.exited);
+        assert_eq!(status.exitcode, None);
+        assert_eq!(status.out_data, "ok");
+        assert_eq!(status.err_data, "");
+    }
+
+    #[test]
+    fn parses_qemu_agent_exec_status_direct_payload() {
+        let payload = json!({
+            "exited": 1,
+            "exitcode": 0,
+            "out-data": "apache2.service loaded active running The Apache HTTP Server\n",
+            "err-data": ""
+        });
+        let status = parse_agent_exec_status(&payload);
+        assert!(status.exited);
+        assert_eq!(status.exitcode, Some(0));
+        assert!(status.out_data.contains("apache2.service"));
+        assert_eq!(status.err_data, "");
+    }
+
+    #[test]
+    fn parses_qemu_agent_exec_status_failure_payload() {
+        let payload = json!({
+            "exited": true,
+            "exitcode": 127,
+            "out-data": "",
+            "err-data": "/bin/sh: systemctl: not found\n"
+        });
+        let status = parse_agent_exec_status(&payload);
+        assert!(status.exited);
+        assert_eq!(status.exitcode, Some(127));
+        assert!(status.err_data.contains("systemctl"));
     }
 }

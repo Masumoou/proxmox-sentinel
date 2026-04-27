@@ -14,7 +14,13 @@ VM.GuestAgent.Audit
 VM.GuestAgent.Unrestricted
 ```
 
-Sentinel uses native guest-agent endpoints for OS, IP, and filesystem data, then uses guest exec only for service and process discovery.
+Sentinel uses native guest-agent endpoints for OS, IP, and filesystem data, then uses guest exec only for service and process discovery. Guest exec is sent with Proxmox's JSON array payload:
+
+```json
+{"command":["/bin/sh","-lc","systemctl list-units --type=service --all --no-pager --no-legend --plain"]}
+```
+
+Plain `systemctl` output is parsed into service name, load state, active state, sub-state, description, `running`, and `failed`. A service is treated as running only when the active state is `active` and the sub-state is `running`.
 
 Service rules can target a VM/LXC by `vmid` and can evaluate:
 

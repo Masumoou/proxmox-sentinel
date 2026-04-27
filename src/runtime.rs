@@ -22,7 +22,7 @@ use crate::storage::Storage;
 
 mod services;
 
-use services::{is_public_bind_without_auth, service_is_healthy, vm_service_state};
+use services::{is_public_bind_without_auth, service_is_healthy};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Main loop
@@ -615,13 +615,12 @@ pub async fn run(cfg: Config) -> Result<()> {
                             conn_failures.insert(guest.vmid, 0);
                         }
 
-                        let service_states = service_state_map(vm_stats.services.iter().map(|s| {
-                            ServiceRuleState::new(
-                                &s.name,
-                                vm_service_state(s.active, &s.status),
-                                &s.status,
-                            )
-                        }));
+                        let service_states = service_state_map(
+                            vm_stats
+                                .services
+                                .iter()
+                                .map(|s| ServiceRuleState::new(&s.name, &s.state, &s.sub_state)),
+                        );
 
                         let active_services: std::collections::HashSet<String> = service_states
                             .iter()
@@ -633,12 +632,15 @@ pub async fn run(cfg: Config) -> Result<()> {
                             .services
                             .iter()
                             .map(|s| {
-                                let state = vm_service_state(s.active, &s.status);
                                 json!({
                                     "name": normalize_service_name(&s.name),
-                                    "status": if s.active { "running" } else { state },
-                                    "state": state,
-                                    "sub_state": s.status.as_str()
+                                    "status": if s.running { "running" } else if s.failed { "failed" } else { s.sub_state.as_str() },
+                                    "state": s.state.as_str(),
+                                    "sub_state": s.sub_state.as_str(),
+                                    "load": s.load.as_str(),
+                                    "description": s.description.as_str(),
+                                    "running": s.running,
+                                    "failed": s.failed
                                 })
                             })
                             .collect();

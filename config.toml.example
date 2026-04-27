@@ -77,6 +77,7 @@ webhook_url       = ""          # Generic or Alertmanager-compatible webhook end
 cpu_threshold     = 90.0        # Alert if CPU > 90%
 memory_threshold  = 85.0        # Alert if memory > 85%
 disk_threshold    = 90.0        # Alert if disk > 90%
+ignore_template_guests = true   # Do not alert on stopped VM/LXC templates by default
 
 [ssh]
 private_key_path = "/root/.ssh/id_ed25519"
