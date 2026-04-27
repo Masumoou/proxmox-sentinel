@@ -1,0 +1,30 @@
+[
+  {
+    "upid": "UPID:node:1",
+    "node": "node1",
+    "type": "vzdump",
+    "id": "101",
+    "user": "root@pam",
+    "status": "OK",
+    "starttime": 1700000000,
+    "endtime": 1700000300
+  },
+  {
+    "upid": "UPID:node:2",
+    "node": "node1",
+    "type": "qmigrate",
+    "id": "102",
+    "user": "root@pam",
+    "starttime": 1700000000
+  },
+  {
+    "upid": "UPID:node:3",
+    "node": "node2",
+    "worker_type": "snapshot",
+    "id": 103,
+    "user": "root@pam",
+    "status": "ERROR: snapshot failed",
+    "starttime": 1700000100,
+    "endtime": 1700000110
+  }
+]

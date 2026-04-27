@@ -74,6 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/Masumoou/proxmox-sentinel/main/inst
 ```
 
 The installer downloads the latest release. If a Debian package exists, it uses that. Otherwise it falls back to the release binary.
+It verifies release checksums when `checksums.txt` is available and preserves an existing `/etc/proxmox-sentinel/config.toml` during upgrades.
 
 ### Option 2: Debian Package
 
@@ -473,6 +474,26 @@ curl -X POST http://127.0.0.1:9101/api/v1/alerts/test
 ```
 
 Webhook payloads are structured so they can be consumed by Alertmanager-compatible receivers or custom webhook handlers.
+
+Implemented alert delivery today:
+
+- generic webhook
+- Alertmanager-compatible webhook payloads
+
+Roadmap alert channels, not yet implemented as first-class providers:
+
+- Telegram
+- Discord
+- Slack
+- Email SMTP
+- Gotify
+- ntfy.sh
+- PagerDuty
+- Opsgenie
+- Microsoft Teams
+- Grafana OnCall direct integration
+
+Some of those tools can already receive alerts if they expose a compatible webhook endpoint, but Sentinel currently treats them as generic webhooks.
 
 ## What Sentinel Collects
 
@@ -899,7 +920,6 @@ shared_secret = "change-me"
 GitHub releases include:
 
 - `proxmox-sentinel-linux-amd64`
-- `proxmox-sentinel-linux-x86_64`
 - `proxmox-sentinel.deb`
 - `checksums.txt`
 - `proxmox-sentinel.service`
@@ -910,6 +930,8 @@ Verify checksums:
 ```bash
 sha256sum -c checksums.txt
 ```
+
+Release automation is handled by `.github/workflows/release.yml` and runs when a version tag such as `v0.3.0-beta` is pushed. Normal branch and pull request checks run through CI/build workflows without publishing a release.
 
 ## Upgrade
 
@@ -936,6 +958,8 @@ Run doctor after upgrade:
 ```bash
 proxmox-sentinel --config /etc/proxmox-sentinel/config.toml doctor
 ```
+
+For release validation across real Proxmox environments, use [docs/Real-World-Testing.md](docs/Real-World-Testing.md).
 
 ## Troubleshooting
 

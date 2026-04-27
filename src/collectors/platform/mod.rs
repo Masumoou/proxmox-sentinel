@@ -286,6 +286,7 @@ fn int_field(value: &Value, key: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::backups::parse_backup_artifact;
+    use super::ceph::parse_ceph_json;
     use super::lvmthin::parse_lvmthin_json;
     use super::snapshots::parse_snapshot_api_rows;
     use super::tasks::parse_tasks_json;
@@ -294,33 +295,10 @@ mod tests {
 
     #[test]
     fn parses_zfs_pool_status_and_errors() {
-        let list = "rpool\tONLINE\t62%\t12%\ntank\tDEGRADED\t81%\t34%\n";
-        let status = r#"
-  pool: rpool
- state: ONLINE
-  scan: scrub repaired 0B in 00:10:03 with 0 errors on Sun Apr 19 00:10:03 2026
-config:
-
-        NAME        STATE     READ WRITE CKSUM
-        rpool       ONLINE       0     0     0
-          sda3      ONLINE       0     0     0
-
-errors: No known data errors
-
-  pool: tank
- state: DEGRADED
-  scan: scrub repaired 128K in 00:03:00 with 2 errors on Sun Apr 19 00:03:00 2026
-config:
-
-        NAME        STATE     READ WRITE CKSUM
-        tank        DEGRADED     0     0     2
-          sdb       ONLINE       0     0     0
-          sdc       DEGRADED     0     0     2
-
-errors: Permanent errors have been detected
-"#;
+        let list = include_str!("../../../tests/fixtures/platform/zpool_list.tsv");
+        let status = include_str!("../../../tests/fixtures/platform/zpool_status.txt");
         let pools = parse_zfs_pools(list, status);
-        assert_eq!(pools.len(), 2);
+        assert_eq!(pools.len(), 3);
         assert_eq!(pools[0].name, "rpool");
         assert_eq!(pools[0].state, "ONLINE");
         assert_eq!(pools[0].checksum_errors, 0);
@@ -329,70 +307,76 @@ errors: Permanent errors have been detected
         assert_eq!(pools[1].capacity_pct, 81.0);
         assert_eq!(pools[1].checksum_errors, 2);
         assert!(scrub_has_errors(&pools[1].scrub));
+        assert_eq!(pools[2].name, "scratch");
+        assert_eq!(pools[2].state, "FAULTED");
+        assert_eq!(pools[2].read_errors, 4);
     }
 
     #[test]
     fn parses_lvmthin_thresholds_from_json() {
         let cfg = PlatformConfig::default();
-        let json = r#"{
-          "report": [{
-            "lv": [
-              {"vg_name":"pve","lv_name":"data","lv_attr":"twi-aotz--","data_percent":"86.2","metadata_percent":"12.5"},
-              {"vg_name":"pve","lv_name":"root","lv_attr":"-wi-ao----","data_percent":"","metadata_percent":""}
-            ]
-          }]
-        }"#;
+        let json = include_str!("../../../tests/fixtures/platform/lvs.json");
         let pools = parse_lvmthin_json(json, &cfg);
-        assert_eq!(pools.len(), 1);
+        assert_eq!(pools.len(), 2);
         assert_eq!(pools[0].vg, "pve");
         assert_eq!(pools[0].lv, "data");
         assert_eq!(pools[0].status, "warning");
+        assert_eq!(pools[1].lv, "vmdata");
+        assert_eq!(pools[1].status, "critical");
     }
 
     #[test]
     fn parses_task_history_rows() {
         let now = 1_700_000_600;
-        let json = r#"[
-          {"upid":"UPID:node:1","node":"node1","type":"vzdump","id":"101","user":"root@pam","status":"OK","starttime":1700000000,"endtime":1700000300},
-          {"upid":"UPID:node:2","node":"node1","type":"qmigrate","id":"102","user":"root@pam","starttime":1700000000}
-        ]"#;
+        let json = include_str!("../../../tests/fixtures/platform/pvesh_tasks.json");
         let tasks = parse_tasks_json(json, now);
-        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks.len(), 3);
         assert_eq!(tasks[0].vmid, Some(101));
         assert_eq!(tasks[0].duration_secs, 300);
         assert_eq!(tasks[1].status, "running");
         assert_eq!(tasks[1].duration_secs, 600);
+        assert!(tasks[2].status.contains("ERROR"));
     }
 
     #[test]
     fn parses_snapshot_api_metadata() {
         let now = 1_700_086_400;
-        let rows: Vec<Value> = serde_json::from_str(
-            r#"[
-          {"name":"current"},
-          {"name":"pre-upgrade","description":"before updates","snaptime":1700000000}
-        ]"#,
-        )
+        let rows: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/platform/snapshots.json"
+        ))
         .unwrap();
         let snapshots = parse_snapshot_api_rows(&rows, now);
-        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots.len(), 2);
         assert_eq!(snapshots[0].name, "pre-upgrade");
         assert_eq!(snapshots[0].age_days, Some(1));
+        assert_eq!(snapshots[1].name, "before-migration");
+        assert_eq!(snapshots[1].age_days, Some(2));
     }
 
     #[test]
     fn parses_backup_artifact_from_storage_content() {
-        let row: Value = serde_json::from_str(
-            r#"{
-          "volid": "backup:backup/vzdump-qemu-104-2026_04_24-12_30_00.vma.zst",
-          "size": 123456,
-          "ctime": 1777033800
-        }"#,
-        )
+        let rows: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/platform/storage_content_backups.json"
+        ))
         .unwrap();
-        let artifact = parse_backup_artifact(&row, "pve1", "backup").unwrap();
+        let artifact = parse_backup_artifact(&rows[0], "pve1", "backup").unwrap();
         assert_eq!(artifact.vmid, 104);
         assert_eq!(artifact.size_bytes, Some(123456));
         assert_eq!(artifact.ctime, 1777033800);
+        let parsed_from_name = parse_backup_artifact(&rows[1], "pve1", "backup").unwrap();
+        assert_eq!(parsed_from_name.vmid, 105);
+        assert!(parsed_from_name.ctime > 0);
+    }
+
+    #[test]
+    fn parses_ceph_status_json() {
+        let ceph = parse_ceph_json(include_str!(
+            "../../../tests/fixtures/platform/ceph_status.json"
+        ));
+        assert!(ceph.installed);
+        assert_eq!(ceph.health, "HEALTH_WARN");
+        assert_eq!(ceph.osd_up, Some(2));
+        assert_eq!(ceph.osd_total, Some(3));
+        assert_eq!(ceph.mons, vec!["pve1".to_string(), "pve2".to_string()]);
     }
 }

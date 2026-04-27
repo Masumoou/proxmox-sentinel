@@ -1,0 +1,20 @@
+{
+  "health": {
+    "status": "HEALTH_WARN",
+    "checks": {
+      "OSD_DOWN": {
+        "severity": "HEALTH_WARN",
+        "summary": {
+          "message": "1 osds down"
+        }
+      }
+    }
+  },
+  "osdmap": {
+    "osdmap": {
+      "num_osds": 3,
+      "num_up_osds": 2
+    }
+  },
+  "quorum_names": ["pve1", "pve2"]
+}

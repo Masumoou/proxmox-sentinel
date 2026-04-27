@@ -613,13 +613,48 @@ async fn tail_file(path: &str, lines: usize) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_first_ipv4;
+    use super::{parse_first_ipv4, parse_services_text};
 
     #[test]
     fn parses_first_global_ipv4() {
         assert_eq!(
             parse_first_ipv4("127.0.0.1 10.10.207.45 169.254.1.1"),
             Some("10.10.207.45".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_lxc_systemctl_plain_services() {
+        let services = parse_services_text(include_str!(
+            "../../tests/fixtures/services/systemctl_plain.txt"
+        ));
+        assert_eq!(services.len(), 3);
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "apache2.service" && svc.state == "active")
+        );
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "mariadb.service" && svc.sub_state == "dead")
+        );
+    }
+
+    #[test]
+    fn parses_lxc_openrc_services() {
+        let services =
+            parse_services_text(include_str!("../../tests/fixtures/services/openrc.txt"));
+        assert_eq!(services.len(), 3);
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "sshd" && svc.state == "started")
+        );
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "redis" && svc.state == "stopped")
         );
     }
 }

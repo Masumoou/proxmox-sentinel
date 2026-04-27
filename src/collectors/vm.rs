@@ -547,3 +547,66 @@ fn parse_systemctl_plain(output: &str) -> Vec<VmService> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_openrc_output, parse_services_output, parse_systemctl_plain};
+
+    #[test]
+    fn parses_systemctl_json_services() {
+        let services =
+            parse_services_output(include_str!("../../tests/fixtures/services/systemctl.json"));
+        assert_eq!(services.len(), 3);
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "nginx.service" && svc.active)
+        );
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "postgresql.service" && svc.status == "running")
+        );
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "redis.service" && !svc.active && svc.status == "failed")
+        );
+    }
+
+    #[test]
+    fn parses_systemctl_plain_services() {
+        let services = parse_systemctl_plain(include_str!(
+            "../../tests/fixtures/services/systemctl_plain.txt"
+        ));
+        assert_eq!(services.len(), 3);
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "apache2.service" && svc.active)
+        );
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "php8.3-fpm.service" && svc.status == "running")
+        );
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "mariadb.service" && !svc.active && svc.status == "dead")
+        );
+    }
+
+    #[test]
+    fn parses_openrc_services() {
+        let services =
+            parse_openrc_output(include_str!("../../tests/fixtures/services/openrc.txt"));
+        assert_eq!(services.len(), 3);
+        assert!(services.iter().any(|svc| svc.name == "sshd" && svc.active));
+        assert!(
+            services
+                .iter()
+                .any(|svc| svc.name == "redis" && !svc.active && svc.status == "stopped")
+        );
+    }
+}

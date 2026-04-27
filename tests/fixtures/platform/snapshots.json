@@ -1,0 +1,15 @@
+[
+  {
+    "name": "current"
+  },
+  {
+    "name": "pre-upgrade",
+    "description": "before updates",
+    "snaptime": 1700000000
+  },
+  {
+    "name": "before-migration",
+    "description": "before moving storage",
+    "ctime": 1699913600
+  }
+]

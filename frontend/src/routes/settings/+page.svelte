@@ -54,7 +54,7 @@
 
     <div class="neon-card section">
       <div class="section-title">ABOUT</div>
-      <div class="about-row"><span class="about-label">Version</span><span class="about-val text-cyan">0.2.14</span></div>
+      <div class="about-row"><span class="about-label">Version</span><span class="about-val text-cyan">0.2.15</span></div>
       <div class="about-row"><span class="about-label">Backend</span><span class="about-val">Rust + Axum + Tokio</span></div>
       <div class="about-row"><span class="about-label">Frontend</span><span class="about-val">SvelteKit 5 + uPlot</span></div>
       <div class="about-row"><span class="about-label">License</span><span class="about-val">MIT</span></div>

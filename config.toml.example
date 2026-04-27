@@ -73,7 +73,7 @@ severity = "warning"
 
 [alerts]
 enabled           = true
-webhook_url       = ""          # Alertmanager / Grafana OnCall / Slack webhook
+webhook_url       = ""          # Generic or Alertmanager-compatible webhook endpoint
 cpu_threshold     = 90.0        # Alert if CPU > 90%
 memory_threshold  = 85.0        # Alert if memory > 85%
 disk_threshold    = 90.0        # Alert if disk > 90%

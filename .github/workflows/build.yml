@@ -3,7 +3,6 @@ name: Build
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
@@ -16,7 +15,7 @@ jobs:
     name: Build Linux x86_64
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v6
@@ -67,64 +66,3 @@ jobs:
           name: proxmox-sentinel-linux-x86_64
           path: target/x86_64-unknown-linux-gnu/release/proxmox-sentinel
           retention-days: 30
-
-      # Create GitHub Release when a version tag is pushed (e.g. v0.1.0)
-      - name: Rename binary for release
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          cp target/x86_64-unknown-linux-gnu/release/proxmox-sentinel \
-             proxmox-sentinel-linux-amd64
-          cp proxmox-sentinel-linux-amd64 proxmox-sentinel-linux-x86_64
-          cp config.toml.example config.toml.example.release
-          cp packaging/proxmox-sentinel.service proxmox-sentinel.service
-
-      - name: Build Debian package
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          rm -rf package-root
-          mkdir -p package-root/DEBIAN
-          mkdir -p package-root/usr/local/bin
-          mkdir -p package-root/etc/proxmox-sentinel
-          mkdir -p package-root/etc/systemd/system
-          cp proxmox-sentinel-linux-amd64 package-root/usr/local/bin/proxmox-sentinel
-          cp config.toml.example package-root/etc/proxmox-sentinel/config.toml.example
-          cp packaging/proxmox-sentinel.service package-root/etc/systemd/system/proxmox-sentinel.service
-          cat > package-root/DEBIAN/control <<EOF
-          Package: proxmox-sentinel
-          Version: ${VERSION}
-          Section: admin
-          Priority: optional
-          Architecture: amd64
-          Maintainer: Masumoou
-          Description: Agentless Proxmox VE monitoring daemon and dashboard
-          EOF
-          cat > package-root/DEBIAN/postinst <<'EOF'
-          #!/usr/bin/env bash
-          set -e
-          systemctl daemon-reload || true
-          if [ ! -f /etc/proxmox-sentinel/config.toml ]; then
-            cp /etc/proxmox-sentinel/config.toml.example /etc/proxmox-sentinel/config.toml
-          fi
-          echo "Edit /etc/proxmox-sentinel/config.toml, then run: systemctl enable --now proxmox-sentinel"
-          EOF
-          chmod 0755 package-root/DEBIAN/postinst
-          dpkg-deb --build package-root proxmox-sentinel.deb
-
-      - name: Generate checksums
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          sha256sum proxmox-sentinel-linux-amd64 proxmox-sentinel-linux-x86_64 proxmox-sentinel.deb proxmox-sentinel.service config.toml.example.release > checksums.txt
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            proxmox-sentinel-linux-amd64
-            proxmox-sentinel-linux-x86_64
-            proxmox-sentinel.deb
-            checksums.txt
-            proxmox-sentinel.service
-            config.toml.example.release
-          generate_release_notes: true

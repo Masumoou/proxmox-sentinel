@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.15
+
+- Added a dedicated tag-driven release workflow that publishes the Linux binary, Debian package, checksum file, systemd unit, and release config example.
+- Hardened `install.sh` for real GitHub release assets, checksum verification, `.deb` install, binary fallback, and config preservation on upgrades.
+- Added parser fixture coverage and real-world testing documentation for release readiness across common Proxmox environments.
+- Kept README release artifact and alert-channel claims aligned with what the project actually ships.
+
 ## v0.2.14
 
 - Fixed release-readiness refactor compile issues in `init` and runtime cluster wiring.

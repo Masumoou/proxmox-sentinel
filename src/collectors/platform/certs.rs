@@ -183,7 +183,7 @@ mod tests {
         let check = cert_from_not_after(
             "test",
             "https://example.com",
-            "notAfter=Apr 25 12:00:00 2099 GMT",
+            include_str!("../../../tests/fixtures/platform/cert_not_after.txt"),
             &cfg,
         );
         assert_eq!(check.status, "ok");

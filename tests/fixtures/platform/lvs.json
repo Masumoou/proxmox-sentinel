@@ -1,0 +1,29 @@
+{
+  "report": [
+    {
+      "lv": [
+        {
+          "vg_name": "pve",
+          "lv_name": "data",
+          "lv_attr": "twi-aotz--",
+          "data_percent": "86.2",
+          "metadata_percent": "12.5"
+        },
+        {
+          "vg_name": "pve",
+          "lv_name": "root",
+          "lv_attr": "-wi-ao----",
+          "data_percent": "",
+          "metadata_percent": ""
+        },
+        {
+          "vg_name": "fast",
+          "lv_name": "vmdata",
+          "lv_attr": "twi-a-tz--",
+          "data_percent": "96.1",
+          "metadata_percent": "91.0"
+        }
+      ]
+    }
+  ]
+}

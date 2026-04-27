@@ -36,37 +36,114 @@ echo -e "${NC}"
 [[ $EUID -ne 0 ]] && err "This script must be run as root (sudo)"
 command -v curl >/dev/null 2>&1 || err "curl is required but not installed"
 
+TMP_DIR="$(mktemp -d /tmp/proxmox-sentinel-install.XXXXXX)"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+asset_url() {
+    local asset_name="$1"
+    echo "$RELEASE_JSON" \
+        | grep -o "\"browser_download_url\"[[:space:]]*:[[:space:]]*\"[^\"]*${asset_name}\"" \
+        | head -1 \
+        | sed -E 's/.*"([^"]+)"/\1/' \
+        || true
+}
+
+download_asset() {
+    local url="$1"
+    local dest="$2"
+    curl -fSL --retry 3 --retry-delay 2 -o "$dest" "$url"
+}
+
+verify_checksum() {
+    local file="$1"
+    local asset_name="$2"
+
+    if [[ ! -s "${TMP_DIR}/checksums.txt" ]]; then
+        warn "checksums.txt unavailable; skipping checksum verification for ${asset_name}"
+        return 0
+    fi
+
+    local expected
+    expected="$(awk -v name="$asset_name" '$2 == name { print $1; exit }' "${TMP_DIR}/checksums.txt" || true)"
+    if [[ -z "$expected" ]]; then
+        warn "No checksum entry for ${asset_name}; skipping verification"
+        return 0
+    fi
+
+    echo "${expected}  ${file}" | sha256sum -c -
+}
+
+run_first_time_init() {
+    if [[ "${HAD_CONFIG}" == true ]]; then
+        warn "Config already exists: ${CONFIG_DIR}/config.toml (preserved)"
+        CONFIG_READY=true
+        return 0
+    fi
+
+    if [[ -r /dev/tty && -w /dev/tty ]]; then
+        info "Running interactive first-time setup..."
+        "${INSTALL_DIR}/${BINARY_NAME}" init --force </dev/tty
+        CONFIG_READY=true
+        ok "Config written: ${CONFIG_DIR}/config.toml"
+    else
+        CONFIG_READY=false
+        warn "Non-interactive install detected; config was not initialized."
+        echo "  Run this next:"
+        echo "  sudo ${INSTALL_DIR}/${BINARY_NAME} init"
+    fi
+}
+
 # ── Download latest release ───────────────────────────────────────────────────
 
 info "Fetching latest release from GitHub..."
 
 HAD_CONFIG=false
 [[ -f "${CONFIG_DIR}/config.toml" ]] && HAD_CONFIG=true
+CONFIG_READY=false
 
-RELEASE_JSON=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)
-DEB_URL=$(echo "$RELEASE_JSON" | grep -o "https://.*${BINARY_NAME}\.deb[^\"]*" | head -1 || true)
-RELEASE_URL=$(echo "$RELEASE_JSON" | grep -o "https://.*${BINARY_NAME}-linux-amd64[^\"]*" | head -1 || true)
+RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)
+DEB_ASSET="${BINARY_NAME}.deb"
+BINARY_ASSET="${BINARY_NAME}-linux-amd64"
+SERVICE_ASSET="${BINARY_NAME}.service"
+CHECKSUM_ASSET="checksums.txt"
+
+DEB_URL=$(asset_url "$DEB_ASSET")
+BINARY_URL=$(asset_url "$BINARY_ASSET")
+SERVICE_URL=$(asset_url "$SERVICE_ASSET")
+CHECKSUM_URL=$(asset_url "$CHECKSUM_ASSET")
+
+if [[ -n "$CHECKSUM_URL" ]]; then
+    info "Downloading checksums.txt"
+    download_asset "$CHECKSUM_URL" "${TMP_DIR}/checksums.txt"
+fi
 
 if [[ -n "$DEB_URL" ]] && command -v dpkg >/dev/null 2>&1; then
     info "Downloading Debian package: ${DEB_URL}"
-    TMP_DEB="$(mktemp /tmp/proxmox-sentinel.XXXXXX.deb)"
-    curl -sSL -o "${TMP_DEB}" "${DEB_URL}"
-    dpkg -i "${TMP_DEB}" || apt-get install -f -y
+    TMP_DEB="${TMP_DIR}/${DEB_ASSET}"
+    download_asset "${DEB_URL}" "${TMP_DEB}"
+    verify_checksum "${TMP_DEB}" "${DEB_ASSET}"
+    dpkg -i "${TMP_DEB}" || DEBIAN_FRONTEND=noninteractive apt-get install -f -y
     ok "Debian package installed"
-    if [[ "${HAD_CONFIG}" != true ]]; then
-        "${INSTALL_DIR}/${BINARY_NAME}" init --force
+    run_first_time_init
+    if [[ "${CONFIG_READY}" == true ]]; then
+        systemctl enable --now proxmox-sentinel || true
+    else
+        warn "Service not started because first-time config is not initialized yet."
     fi
-    systemctl enable --now proxmox-sentinel || true
     echo -e "${CYAN}Installation complete!${NC}"
     exit 0
 fi
 
-if [[ -z "$RELEASE_URL" ]]; then
+if [[ -z "$BINARY_URL" ]]; then
     # Fallback: try GitHub Actions artifact (manual download needed)
-    warn "No GitHub Release found. Checking for CI build artifact..."
+    warn "No usable GitHub Release asset found for ${BINARY_ASSET}."
     echo ""
-    echo "  The binary isn't published as a Release yet."
-    echo "  Download it manually from GitHub Actions:"
+    echo "  A release must contain:"
+    echo "    - ${BINARY_ASSET}"
+    echo "    - ${DEB_ASSET}"
+    echo "    - ${CHECKSUM_ASSET}"
+    echo ""
+    echo "  Push a version tag such as v0.3.0-beta, or download a CI artifact manually:"
     echo "  https://github.com/${REPO}/actions"
     echo ""
     echo "  Then run: install.sh /path/to/downloaded/proxmox-sentinel"
@@ -80,8 +157,9 @@ if [[ -z "$RELEASE_URL" ]]; then
         err "No binary available. Download from GitHub Actions first."
     fi
 else
-    info "Downloading: ${RELEASE_URL}"
-    curl -sSL -o "${INSTALL_DIR}/${BINARY_NAME}" "${RELEASE_URL}"
+    info "Downloading: ${BINARY_URL}"
+    download_asset "${BINARY_URL}" "${INSTALL_DIR}/${BINARY_NAME}"
+    verify_checksum "${INSTALL_DIR}/${BINARY_NAME}" "${BINARY_ASSET}"
 fi
 
 chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
@@ -92,19 +170,18 @@ ok "Binary installed: ${INSTALL_DIR}/${BINARY_NAME}"
 mkdir -p "${CONFIG_DIR}"
 mkdir -p "${DATA_DIR}"
 
-if [[ ! -f "${CONFIG_DIR}/config.toml" ]]; then
-    info "Running interactive first-time setup..."
-    "${INSTALL_DIR}/${BINARY_NAME}" init --force
-    ok "Config written: ${CONFIG_DIR}/config.toml"
-else
-    warn "Config already exists: ${CONFIG_DIR}/config.toml (skipping)"
-fi
+run_first_time_init
 
 # ── Create systemd service ────────────────────────────────────────────────────
 
 info "Creating systemd service..."
 
-cat > /etc/systemd/system/proxmox-sentinel.service << 'UNIT'
+if [[ -n "${SERVICE_URL}" ]]; then
+    download_asset "${SERVICE_URL}" "${TMP_DIR}/${SERVICE_ASSET}"
+    verify_checksum "${TMP_DIR}/${SERVICE_ASSET}" "${SERVICE_ASSET}"
+    cp "${TMP_DIR}/${SERVICE_ASSET}" /etc/systemd/system/proxmox-sentinel.service
+else
+    cat > /etc/systemd/system/proxmox-sentinel.service << 'UNIT'
 [Unit]
 Description=Proxmox Sentinel — Agentless Monitoring
 After=network-online.target
@@ -129,18 +206,24 @@ ReadOnlyPaths=/sys/fs/cgroup /var/lib/lxc /proc /etc/proxmox-sentinel
 [Install]
 WantedBy=multi-user.target
 UNIT
+fi
 
 systemctl daemon-reload
 ok "Systemd service created"
 
 # ── Start service ─────────────────────────────────────────────────────────────
 
-info "Starting proxmox-sentinel..."
-systemctl enable --now proxmox-sentinel
+if [[ "${CONFIG_READY}" == true ]]; then
+    info "Starting proxmox-sentinel..."
+    systemctl enable --now proxmox-sentinel
+else
+    warn "Service not started because first-time config is not initialized yet."
+    echo "  After init, run: sudo systemctl enable --now proxmox-sentinel"
+fi
 
 sleep 2
 
-if systemctl is-active --quiet proxmox-sentinel; then
+if [[ "${CONFIG_READY}" == true ]] && systemctl is-active --quiet proxmox-sentinel; then
     ok "proxmox-sentinel is running!"
     echo ""
     echo -e "  ${GREEN}Dashboard:${NC}  http://$(hostname -I | awk '{print $1}'):9101/"
@@ -148,7 +231,7 @@ if systemctl is-active --quiet proxmox-sentinel; then
     echo -e "  ${GREEN}Logs:${NC}      journalctl -fu proxmox-sentinel"
     echo -e "  ${GREEN}Config:${NC}    ${CONFIG_DIR}/config.toml"
     echo ""
-else
+elif [[ "${CONFIG_READY}" == true ]]; then
     warn "Service may not have started. Check: journalctl -fu proxmox-sentinel"
 fi
 

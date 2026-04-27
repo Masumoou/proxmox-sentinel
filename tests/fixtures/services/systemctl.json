@@ -1,0 +1,23 @@
+[
+  {
+    "unit": "nginx.service",
+    "load": "loaded",
+    "active": "active",
+    "sub": "running",
+    "description": "A high performance web server"
+  },
+  {
+    "unit": "postgresql.service",
+    "load": "loaded",
+    "active": "active",
+    "sub": "running",
+    "description": "PostgreSQL RDBMS"
+  },
+  {
+    "unit": "redis.service",
+    "load": "loaded",
+    "active": "failed",
+    "sub": "failed",
+    "description": "Redis data structure server"
+  }
+]

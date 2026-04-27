@@ -1,0 +1,11 @@
+[
+  {
+    "volid": "backup:backup/vzdump-qemu-104-2026_04_24-12_30_00.vma.zst",
+    "size": 123456,
+    "ctime": 1777033800
+  },
+  {
+    "volid": "backup:backup/vzdump-lxc-105-2026_04_25-01_02_03.tar.zst",
+    "size": 456789
+  }
+]

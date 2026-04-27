@@ -122,13 +122,13 @@ impl LogStats {
         let now = chrono::Utc::now().timestamp() as u64;
         let cut_off = now.saturating_sub(60);
 
-        while self.request_ts.front().map_or(false, |&t| t < cut_off) {
+        while self.request_ts.front().is_some_and(|&t| t < cut_off) {
             self.request_ts.pop_front();
         }
-        while self.error_ts.front().map_or(false, |&t| t < cut_off) {
+        while self.error_ts.front().is_some_and(|&t| t < cut_off) {
             self.error_ts.pop_front();
         }
-        while self.auth_ts.front().map_or(false, |&t| t < cut_off) {
+        while self.auth_ts.front().is_some_and(|&t| t < cut_off) {
             self.auth_ts.pop_front();
         }
 

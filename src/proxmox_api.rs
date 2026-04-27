@@ -269,7 +269,7 @@ impl ProxmoxClient {
             swap_total: raw.swap.as_ref().and_then(|s| s.total).unwrap_or(0),
             disk_used: raw.rootfs.as_ref().map(|d| d.used).unwrap_or(0),
             disk_total: raw.rootfs.as_ref().map(|d| d.total).unwrap_or(0),
-            load_avg1: load.get(0).map(parse_load).unwrap_or(0.0),
+            load_avg1: load.first().map(parse_load).unwrap_or(0.0),
             load_avg5: load.get(1).map(parse_load).unwrap_or(0.0),
             load_avg15: load.get(2).map(parse_load).unwrap_or(0.0),
             uptime: raw.uptime,

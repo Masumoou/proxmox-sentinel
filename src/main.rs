@@ -1,13 +1,13 @@
 // src/main.rs
 // proxmox-sentinel entrypoint. Runtime orchestration lives in runtime.rs.
+// These remaining allows are intentionally temporary while the older collector
+// modules are being refactored in small, behavior-preserving slices.
 #![allow(
     clippy::collapsible_if,
     clippy::field_reassign_with_default,
-    clippy::get_first,
     clippy::manual_flatten,
     clippy::too_many_arguments,
     clippy::unnecessary_cast,
-    clippy::unnecessary_map_or,
     clippy::unwrap_or_default
 )]
 

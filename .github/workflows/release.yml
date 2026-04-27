@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config libsqlite3-dev
+
+      - name: Setup Node.js
+        if: hashFiles('frontend/package.json') != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        if: hashFiles('frontend/package.json') != ''
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run tests
+        run: cargo test --all
+
+      - name: Stage release assets
+        run: |
+          cp target/release/proxmox-sentinel proxmox-sentinel-linux-amd64
+          cp config.toml.example config.toml.example.release
+          cp packaging/proxmox-sentinel.service proxmox-sentinel.service
+
+      - name: Build Debian package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          rm -rf package-root
+          mkdir -p package-root/DEBIAN
+          mkdir -p package-root/usr/local/bin
+          mkdir -p package-root/etc/proxmox-sentinel
+          mkdir -p package-root/etc/systemd/system
+          cp proxmox-sentinel-linux-amd64 package-root/usr/local/bin/proxmox-sentinel
+          cp config.toml.example package-root/etc/proxmox-sentinel/config.toml.example
+          cp packaging/proxmox-sentinel.service package-root/etc/systemd/system/proxmox-sentinel.service
+          cat > package-root/DEBIAN/control <<EOF
+          Package: proxmox-sentinel
+          Version: ${VERSION}
+          Section: admin
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Masumoou
+          Description: Agentless Proxmox VE monitoring daemon and dashboard
+          EOF
+          cat > package-root/DEBIAN/postinst <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          systemctl daemon-reload || true
+          if [ ! -f /etc/proxmox-sentinel/config.toml ]; then
+            cp /etc/proxmox-sentinel/config.toml.example /etc/proxmox-sentinel/config.toml
+          fi
+          echo "Config preserved at /etc/proxmox-sentinel/config.toml"
+          echo "First install: run proxmox-sentinel init, then systemctl enable --now proxmox-sentinel"
+          EOF
+          chmod 0755 package-root/DEBIAN/postinst
+          dpkg-deb --build package-root proxmox-sentinel.deb
+
+      - name: Generate checksums
+        run: |
+          sha256sum proxmox-sentinel-linux-amd64 proxmox-sentinel.deb proxmox-sentinel.service config.toml.example.release > checksums.txt
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            proxmox-sentinel-linux-amd64
+            proxmox-sentinel.deb
+            checksums.txt
+            proxmox-sentinel.service
+            config.toml.example.release
+          generate_release_notes: true

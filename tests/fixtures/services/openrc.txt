@@ -1,0 +1,4 @@
+Runlevel: default
+ sshd                                                        [ started ]
+ nginx                                                       [ started ]
+ redis                                                       [ stopped ]
