@@ -37,7 +37,7 @@ pub(super) async fn collect_ceph(alerts: &mut Vec<Alert>) -> CephHealth {
 }
 
 pub(super) fn parse_ceph_json(out: &str) -> CephHealth {
-    let value: Value = serde_json::from_str(&out).unwrap_or(Value::Null);
+    let value: Value = serde_json::from_str(out).unwrap_or(Value::Null);
     let health = value
         .pointer("/health/status")
         .and_then(Value::as_str)
