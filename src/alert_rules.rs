@@ -255,7 +255,10 @@ impl AlertRuleEvaluator {
                 rule,
                 &format!("guest_disk:{vmid}:{}", mount.mountpoint),
                 condition,
-                format!("mount {} {} is {:.1}", mount.mountpoint, metric, value),
+                format!(
+                    "mount {} {} is {:.1} ({detail})",
+                    mount.mountpoint, metric, value
+                ),
                 now,
             ) {
                 alerts.push(alert);

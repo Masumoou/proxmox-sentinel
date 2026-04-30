@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.21
+
+- Fixed the guest disk alert-rule CI warning while keeping comparison details in alert summaries.
+- Re-cut release artifacts so `main`, Cargo version, dashboard version, and the GitHub tag stay aligned after v0.2.20.
+
 ## v0.2.20
 
 - Added guest filesystem summaries from collected mount data so VM/LXC cards and the guest table can show disk usage alongside CPU/RAM.
