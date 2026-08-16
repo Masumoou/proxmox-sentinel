@@ -24,7 +24,8 @@ const config = {
 			handleHttpError: ({ path, referrer, message }) => {
 				if (path === '/favicon.png') return;
 				throw new Error(message);
-			}
+			},
+			handleUnseenRoutes: 'ignore'
 		}
 	}
 };
