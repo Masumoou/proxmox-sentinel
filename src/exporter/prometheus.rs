@@ -636,6 +636,7 @@ pub struct MetricsServer {
     pub storage: Option<std::sync::Arc<crate::storage::Storage>>,
     pub prometheus_enabled: bool,
     pub config_alert_rules: Vec<AlertRuleConfig>,
+    pub snapshot: std::sync::Arc<std::sync::RwLock<String>>,
 }
 
 #[derive(Clone)]
@@ -644,6 +645,7 @@ struct AppState {
     expected_auth: Option<String>, // "Basic <base64>"
     storage: Option<std::sync::Arc<crate::storage::Storage>>,
     config_alert_rules: Vec<AlertRuleConfig>,
+    snapshot: std::sync::Arc<std::sync::RwLock<String>>,
 }
 
 impl MetricsServer {
@@ -656,6 +658,7 @@ impl MetricsServer {
         auth: Option<String>,
         prometheus_enabled: bool,
         config_alert_rules: Vec<AlertRuleConfig>,
+        snapshot: std::sync::Arc<std::sync::RwLock<String>>,
     ) -> Self {
         Self {
             addr: format!("{}:{}", addr, port),
@@ -665,6 +668,7 @@ impl MetricsServer {
             storage,
             prometheus_enabled,
             config_alert_rules,
+            snapshot,
         }
     }
 
@@ -682,6 +686,7 @@ impl MetricsServer {
             expected_auth,
             storage: self.storage,
             config_alert_rules: self.config_alert_rules,
+            snapshot: self.snapshot,
         };
 
         let mut protected = Router::new()
@@ -705,7 +710,13 @@ impl MetricsServer {
             .fallback(static_handler);
 
         if self.prometheus_enabled {
-            protected = protected.route("/metrics", get(metrics_handler));
+            protected = protected.route(
+                "/metrics",
+                get(metrics_handler).route_layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth_middleware,
+                )),
+            );
         }
 
         if state.expected_auth.is_some() {
@@ -759,13 +770,20 @@ async fn auth_middleware(
     Ok(next.run(req).await)
 }
 
-async fn metrics_handler() -> impl IntoResponse {
+async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
     encoder
         .encode(&metric_families, &mut buffer)
         .unwrap_or_default();
+        
+    // Append the newly generated DB-driven snapshot to the end of the payload
+    let snapshot_str = {
+        let lock = state.snapshot.read().unwrap();
+        lock.clone()
+    };
+    buffer.extend_from_slice(snapshot_str.as_bytes());
 
     (
         StatusCode::OK,

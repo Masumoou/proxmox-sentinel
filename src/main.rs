@@ -15,6 +15,9 @@ use anyhow::Result;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+mod domain;
+mod db;
+
 mod alert_channels;
 mod alert_rules;
 mod alerts;
@@ -83,3 +86,7 @@ async fn main() -> Result<()> {
     info!("proxmox-sentinel starting");
     runtime::run(cfg).await
 }
+
+#[cfg(test)]
+mod integration_1_telemetry_gap;
+

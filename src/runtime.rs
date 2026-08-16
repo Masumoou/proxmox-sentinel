@@ -144,6 +144,37 @@ pub async fn run(cfg: Config) -> Result<()> {
         None
     };
 
+    // Start background Prometheus exporter task for the new schema
+    let (snapshot_arc, snapshot_task) = {
+        let snapshot = std::sync::Arc::new(std::sync::RwLock::new(String::new()));
+        let snapshot_ref = std::sync::Arc::clone(&snapshot);
+        let task = tokio::task::spawn_blocking(move || {
+            use rusqlite::Connection;
+            let conn = match Connection::open("sentinel.db") {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to open sentinel.db for exporter: {}", e);
+                    return;
+                }
+            };
+            let queries = crate::db::sqlite::repository::ExporterQueries::new(&conn);
+            let repo = crate::db::sqlite::repository::TelemetryRepository::new(&conn);
+            let exporter = crate::exporter::snapshot::PrometheusExporter {
+                exporter_queries: &queries,
+                telemetry_repo: &repo,
+                snapshot,
+            };
+            
+            loop {
+                if let Err(e) = exporter.update_snapshot() {
+                    tracing::warn!("Failed to update prometheus snapshot: {}", e);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(30));
+            }
+        });
+        (snapshot_ref, task)
+    };
+
     let metrics_server = prom::MetricsServer::new(
         &cfg.metrics.listen_addr,
         cfg.metrics.listen_port,
@@ -153,6 +184,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         cfg.metrics.auth.clone(),
         cfg.metrics.prometheus_enabled,
         cfg.alert_rules.clone(),
+        snapshot_arc,
     );
     tokio::spawn(async move {
         if let Err(e) = metrics_server.run().await {

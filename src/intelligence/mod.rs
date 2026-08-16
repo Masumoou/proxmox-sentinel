@@ -1,4 +1,4 @@
-// src/intelligence/mod.rs
+﻿// src/intelligence/mod.rs
 //
 // Analyzes metrics across the cluster (NodePressureAnalyzer)
 // making complex decisions like migration suggestions based
@@ -89,3 +89,16 @@ pub async fn run_analyzer(
         }
     }
 }
+
+pub mod discovery_engine;
+
+
+pub mod rule_engine;
+
+pub mod maintenance_engine;
+
+pub mod inhibition_engine;
+
+pub mod notification_engine;
+
+pub mod correlation_engine;
