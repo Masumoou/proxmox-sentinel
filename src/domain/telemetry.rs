@@ -1,6 +1,6 @@
-﻿use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum ObservationState {
@@ -19,4 +19,3 @@ pub struct Telemetry {
     pub observation: ObservationState,
     pub labels: Option<String>, // Stored as JSON string in SQLite
 }
-

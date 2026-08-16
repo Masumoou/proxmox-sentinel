@@ -777,7 +777,7 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     encoder
         .encode(&metric_families, &mut buffer)
         .unwrap_or_default();
-        
+
     // Append the newly generated DB-driven snapshot to the end of the payload
     let snapshot_str = {
         let lock = state.snapshot.read().unwrap();

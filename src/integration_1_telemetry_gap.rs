@@ -1,22 +1,22 @@
-use std::str::FromStr;
+use chrono::{Duration, TimeZone, Utc};
 use rusqlite::Connection;
+use std::str::FromStr;
 use uuid::Uuid;
-use chrono::{Utc, Duration, TimeZone};
 
-use crate::db::sqlite::run_migrations;
 use crate::db::sqlite::repository::*;
-use crate::domain::resource::{Resource, ResourceState};
-use crate::domain::monitor::{Monitor, ConfigState};
-use crate::domain::metric::{Metric, MetricValueType};
-use crate::domain::rule::{Rule, Operator};
-use crate::domain::telemetry::{Telemetry, ObservationState};
-use crate::domain::notification::NotificationRoute;
+use crate::db::sqlite::run_migrations;
 use crate::domain::incident::{Incident, IncidentState};
-use crate::intelligence::rule_engine::RuleEngine;
-use crate::intelligence::notification_engine::NotificationEngine;
-use crate::intelligence::maintenance_engine::MaintenanceEngine;
-use crate::intelligence::inhibition_engine::InhibitionEngine;
+use crate::domain::metric::{Metric, MetricValueType};
+use crate::domain::monitor::{ConfigState, Monitor};
+use crate::domain::notification::NotificationRoute;
+use crate::domain::resource::{Resource, ResourceState};
+use crate::domain::rule::{Operator, Rule};
+use crate::domain::telemetry::{ObservationState, Telemetry};
 use crate::intelligence::correlation_engine::CorrelationEngine;
+use crate::intelligence::inhibition_engine::InhibitionEngine;
+use crate::intelligence::maintenance_engine::MaintenanceEngine;
+use crate::intelligence::notification_engine::NotificationEngine;
+use crate::intelligence::rule_engine::RuleEngine;
 
 fn setup_db() -> Connection {
     let mut conn = Connection::open_in_memory().unwrap();
@@ -43,25 +43,34 @@ fn test_integration_1_telemetry_gap() {
     let maint_eng = MaintenanceEngine::new(&maint_repo);
     let corr_eng = CorrelationEngine::new(&inc_repo, &corr_repo);
     let inhib_eng = InhibitionEngine::new(&inc_repo, &corr_repo);
-    
-    let rule_eng = RuleEngine::new(&rule_repo, &tel_repo, &alert_repo, &inc_repo, &met_repo, &mon_repo);
+
+    let rule_eng = RuleEngine::new(
+        &rule_repo,
+        &tel_repo,
+        &alert_repo,
+        &inc_repo,
+        &met_repo,
+        &mon_repo,
+    );
     let notif_eng = NotificationEngine::new(&notif_repo, &route_repo, &maint_eng, &inhib_eng);
 
     // STEP 1: Prepare configuration
     let vm_id = Uuid::new_v4(); // VM 101
 
     let resource_id = Uuid::new_v4();
-    res_repo.insert(&Resource {
-        id: resource_id,
-        vm_id,
-        kind: "Service".to_string(),
-        identifier: "nginx.service".to_string(),
-        state: ResourceState::Monitored,
-        version: 1,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        deleted_at: None,
-    }).unwrap();
+    res_repo
+        .insert(&Resource {
+            id: resource_id,
+            vm_id,
+            kind: "Service".to_string(),
+            identifier: "nginx.service".to_string(),
+            state: ResourceState::Monitored,
+            version: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            deleted_at: None,
+        })
+        .unwrap();
 
     let monitor_id = Uuid::new_v4();
     conn.execute("INSERT INTO monitors (id, resource_id, state, interval_secs, collection_type, version, created_at, updated_at) VALUES (?1, ?2, 'ENABLED', 30, 'Systemd', 1, ?3, ?4)",
@@ -104,38 +113,99 @@ fn test_integration_1_telemetry_gap() {
 
     // STEP 2: Insert healthy telemetry
     let base_time = Utc.with_ymd_and_hms(2026, 8, 16, 17, 0, 0).unwrap();
-    
-    tel_repo.insert(&Telemetry {
-        id: Uuid::new_v4(), metric_id, timestamp: base_time, value: None, string_value: Some("active".to_string()), observation: ObservationState::Healthy, labels: serde_json::json!({})
-    }).unwrap();
-    tel_repo.insert(&Telemetry {
-        id: Uuid::new_v4(), metric_id, timestamp: base_time + Duration::seconds(30), value: None, string_value: Some("active".to_string()), observation: ObservationState::Healthy, labels: serde_json::json!({})
-    }).unwrap();
-    tel_repo.insert(&Telemetry {
-        id: Uuid::new_v4(), metric_id, timestamp: base_time + Duration::seconds(60), value: None, string_value: Some("active".to_string()), observation: ObservationState::Healthy, labels: serde_json::json!({})
-    }).unwrap();
+
+    tel_repo
+        .insert(&Telemetry {
+            id: Uuid::new_v4(),
+            metric_id,
+            timestamp: base_time,
+            value: None,
+            string_value: Some("active".to_string()),
+            observation: ObservationState::Healthy,
+            labels: serde_json::json!({}),
+        })
+        .unwrap();
+    tel_repo
+        .insert(&Telemetry {
+            id: Uuid::new_v4(),
+            metric_id,
+            timestamp: base_time + Duration::seconds(30),
+            value: None,
+            string_value: Some("active".to_string()),
+            observation: ObservationState::Healthy,
+            labels: serde_json::json!({}),
+        })
+        .unwrap();
+    tel_repo
+        .insert(&Telemetry {
+            id: Uuid::new_v4(),
+            metric_id,
+            timestamp: base_time + Duration::seconds(60),
+            value: None,
+            string_value: Some("active".to_string()),
+            observation: ObservationState::Healthy,
+            labels: serde_json::json!({}),
+        })
+        .unwrap();
 
     rule_eng.evaluate_all().unwrap();
-    assert!(alert_repo.get_active_by_rule(rule_id).unwrap().is_none(), "Should not fire");
+    assert!(
+        alert_repo.get_active_by_rule(rule_id).unwrap().is_none(),
+        "Should not fire"
+    );
 
     // STEP 3: Simulate the failure
     for i in 0..4 {
-        tel_repo.insert(&Telemetry {
-            id: Uuid::new_v4(), metric_id, timestamp: base_time + Duration::seconds(90 + i * 30), value: None, string_value: Some("inactive".to_string()), observation: ObservationState::Problem, labels: serde_json::json!({})
-        }).unwrap();
+        tel_repo
+            .insert(&Telemetry {
+                id: Uuid::new_v4(),
+                metric_id,
+                timestamp: base_time + Duration::seconds(90 + i * 30),
+                value: None,
+                string_value: Some("inactive".to_string()),
+                observation: ObservationState::Problem,
+                labels: serde_json::json!({}),
+            })
+            .unwrap();
     }
 
     rule_eng.evaluate_all().unwrap();
-    
-    let active_alert = alert_repo.get_active_by_rule(rule_id).unwrap().expect("Alert should be firing");
-    let active_inc = inc_repo.get_active_by_alert(active_alert.id).unwrap().expect("Incident should be open");
+
+    let active_alert = alert_repo
+        .get_active_by_rule(rule_id)
+        .unwrap()
+        .expect("Alert should be firing");
+    let active_inc = inc_repo
+        .get_active_by_alert(active_alert.id)
+        .unwrap()
+        .expect("Incident should be open");
 
     // STEP 4: Verify routing
-    notif_eng.process_incident(&active_inc, Some(rule_id), Some(vm_id), Some(resource_id), Some(metric_id)).unwrap();
+    notif_eng
+        .process_incident(
+            &active_inc,
+            Some(rule_id),
+            Some(vm_id),
+            Some(resource_id),
+            Some(metric_id),
+        )
+        .unwrap();
 
     // Check notifications
-    let mut stmt = conn.prepare("SELECT id, incident_id, route_id, channel_id FROM notifications").unwrap();
-    let notifs: Vec<_> = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))).unwrap().collect();
+    let mut stmt = conn
+        .prepare("SELECT id, incident_id, route_id, channel_id FROM notifications")
+        .unwrap();
+    let notifs: Vec<_> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .unwrap()
+        .collect();
     assert_eq!(notifs.len(), 1, "Should have 1 notification");
     let notif = notifs[0].as_ref().unwrap();
     assert_eq!(notif.2, route_id.to_string(), "Route ID must match");
@@ -143,30 +213,51 @@ fn test_integration_1_telemetry_gap() {
 
     // STEP 5: The important telemetry-gap test
     for i in 0..4 {
-        tel_repo.insert(&Telemetry {
-            id: Uuid::new_v4(), metric_id, timestamp: base_time + Duration::seconds(210 + i * 30), value: None, string_value: None, observation: ObservationState::Unknown, labels: serde_json::json!({})
-        }).unwrap();
+        tel_repo
+            .insert(&Telemetry {
+                id: Uuid::new_v4(),
+                metric_id,
+                timestamp: base_time + Duration::seconds(210 + i * 30),
+                value: None,
+                string_value: None,
+                observation: ObservationState::Unknown,
+                labels: serde_json::json!({}),
+            })
+            .unwrap();
     }
 
     rule_eng.evaluate_all().unwrap();
 
     // Incident should STILL be open
-    let inc_after_gap = inc_repo.get_active_by_alert(active_alert.id).unwrap().expect("Incident should remain open during UNKNOWN gap");
+    let inc_after_gap = inc_repo
+        .get_active_by_alert(active_alert.id)
+        .unwrap()
+        .expect("Incident should remain open during UNKNOWN gap");
     assert_eq!(inc_after_gap.id, active_inc.id);
 
     // Notification shouldn't duplicate
-    let notifs_count: i64 = conn.query_row("SELECT COUNT(*) FROM notifications", [], |row| row.get(0)).unwrap();
+    let notifs_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM notifications", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(notifs_count, 1, "Notification unchanged");
 
     // STEP 6: Simulate recovery
     for i in 0..4 {
-        tel_repo.insert(&Telemetry {
-            id: Uuid::new_v4(), metric_id, timestamp: base_time + Duration::seconds(330 + i * 30), value: None, string_value: Some("active".to_string()), observation: ObservationState::Healthy, labels: serde_json::json!({})
-        }).unwrap();
+        tel_repo
+            .insert(&Telemetry {
+                id: Uuid::new_v4(),
+                metric_id,
+                timestamp: base_time + Duration::seconds(330 + i * 30),
+                value: None,
+                string_value: Some("active".to_string()),
+                observation: ObservationState::Healthy,
+                labels: serde_json::json!({}),
+            })
+            .unwrap();
     }
 
     rule_eng.evaluate_all().unwrap();
-    
+
     let active_alert_after = alert_repo.get_active_by_rule(rule_id).unwrap();
     assert!(active_alert_after.is_none(), "Alert should be resolved");
 
@@ -174,6 +265,12 @@ fn test_integration_1_telemetry_gap() {
     assert!(inc_after_resolve.is_none(), "Incident should be resolved");
 
     // Incident 1 remains in history permanently
-    let historical_inc: i64 = conn.query_row("SELECT COUNT(*) FROM incidents WHERE id = ?1", rusqlite::params![active_inc.id.to_string()], |row| row.get(0)).unwrap();
+    let historical_inc: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM incidents WHERE id = ?1",
+            rusqlite::params![active_inc.id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(historical_inc, 1, "Incident must remain in history");
 }

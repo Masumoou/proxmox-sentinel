@@ -1,14 +1,13 @@
-﻿pub mod vm;
-pub mod resource;
-pub mod monitor;
-pub mod metric;
-pub mod telemetry;
-pub mod rule;
 pub mod alert;
-pub mod incident;
-pub mod notification;
-pub mod maintenance;
 pub mod audit;
-pub mod template;
 pub mod discovery;
-
+pub mod incident;
+pub mod maintenance;
+pub mod metric;
+pub mod monitor;
+pub mod notification;
+pub mod resource;
+pub mod rule;
+pub mod telemetry;
+pub mod template;
+pub mod vm;

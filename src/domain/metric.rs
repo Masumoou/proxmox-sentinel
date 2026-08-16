@@ -1,5 +1,5 @@
-﻿use uuid::Uuid;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum MetricValueType {
@@ -16,4 +16,3 @@ pub struct Metric {
     pub value_type: MetricValueType,
     pub unit: Option<String>,
 }
-

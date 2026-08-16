@@ -1,6 +1,6 @@
-﻿use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AuditEvent {
@@ -11,6 +11,5 @@ pub struct AuditEvent {
     pub action: String,
     pub timestamp: DateTime<Utc>,
     pub previous_state: Option<String>, // JSON
-    pub new_state: Option<String>, // JSON
+    pub new_state: Option<String>,      // JSON
 }
-

@@ -1,24 +1,24 @@
-use std::str::FromStr;
+use chrono::{Duration, TimeZone, Utc};
 use rusqlite::Connection;
+use std::str::FromStr;
 use uuid::Uuid;
-use chrono::{Utc, Duration, TimeZone};
 
-use crate::db::sqlite::run_migrations;
 use crate::db::sqlite::repository::*;
-use crate::domain::resource::{Resource, ResourceState};
-use crate::domain::monitor::{Monitor, ConfigState};
-use crate::domain::metric::{Metric, MetricValueType};
-use crate::domain::rule::{Rule, Operator};
-use crate::domain::telemetry::{Telemetry, ObservationState};
-use crate::domain::notification::NotificationRoute;
-use crate::domain::incident::{Incident, IncidentState};
+use crate::db::sqlite::run_migrations;
 use crate::domain::alert::{Alert, AlertState};
-use crate::domain::maintenance::{MaintenanceWindow, MaintenanceScopeType};
-use crate::intelligence::rule_engine::RuleEngine;
-use crate::intelligence::notification_engine::NotificationEngine;
-use crate::intelligence::maintenance_engine::MaintenanceEngine;
-use crate::intelligence::inhibition_engine::InhibitionEngine;
+use crate::domain::incident::{Incident, IncidentState};
+use crate::domain::maintenance::{MaintenanceScopeType, MaintenanceWindow};
+use crate::domain::metric::{Metric, MetricValueType};
+use crate::domain::monitor::{ConfigState, Monitor};
+use crate::domain::notification::NotificationRoute;
+use crate::domain::resource::{Resource, ResourceState};
+use crate::domain::rule::{Operator, Rule};
+use crate::domain::telemetry::{ObservationState, Telemetry};
 use crate::intelligence::correlation_engine::CorrelationEngine;
+use crate::intelligence::inhibition_engine::InhibitionEngine;
+use crate::intelligence::maintenance_engine::MaintenanceEngine;
+use crate::intelligence::notification_engine::NotificationEngine;
+use crate::intelligence::rule_engine::RuleEngine;
 
 fn setup_db() -> Connection {
     let mut conn = Connection::open_in_memory().unwrap();
@@ -42,28 +42,44 @@ fn test_integration_2_maintenance_suppression() {
     let corr_repo = IncidentCorrelationRepository::new(&conn);
     let maint_repo = MaintenanceWindowRepository::new(&conn);
 
-    let maint_eng = MaintenanceEngine::new(&maint_repo, &alert_repo, &rule_repo, &met_repo, &mon_repo, &res_repo);
+    let maint_eng = MaintenanceEngine::new(
+        &maint_repo,
+        &alert_repo,
+        &rule_repo,
+        &met_repo,
+        &mon_repo,
+        &res_repo,
+    );
     let corr_eng = CorrelationEngine::new(&inc_repo, &corr_repo);
     let inhib_eng = InhibitionEngine::new(&inc_repo, &corr_repo);
-    
-    let rule_eng = RuleEngine::new(&rule_repo, &tel_repo, &alert_repo, &inc_repo, &met_repo, &mon_repo);
+
+    let rule_eng = RuleEngine::new(
+        &rule_repo,
+        &tel_repo,
+        &alert_repo,
+        &inc_repo,
+        &met_repo,
+        &mon_repo,
+    );
     let notif_eng = NotificationEngine::new(&notif_repo, &route_repo, &maint_eng, &inhib_eng);
 
     // STEP 1: Prepare configuration hierarchy
     let vm_id = Uuid::new_v4(); // VM 101
 
     let resource_id = Uuid::new_v4();
-    res_repo.insert(&Resource {
-        id: resource_id,
-        vm_id,
-        kind: "Service".to_string(),
-        identifier: "nginx.service".to_string(),
-        state: ResourceState::Monitored,
-        version: 1,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        deleted_at: None,
-    }).unwrap();
+    res_repo
+        .insert(&Resource {
+            id: resource_id,
+            vm_id,
+            kind: "Service".to_string(),
+            identifier: "nginx.service".to_string(),
+            state: ResourceState::Monitored,
+            version: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            deleted_at: None,
+        })
+        .unwrap();
 
     let monitor_id = Uuid::new_v4();
     conn.execute("INSERT INTO monitors (id, resource_id, state, interval_secs, collection_type, version, created_at, updated_at) VALUES (?1, ?2, 'ENABLED', 30, 'Systemd', 1, ?3, ?4)",
@@ -136,18 +152,37 @@ fn test_integration_2_maintenance_suppression() {
     inc_repo.insert(&incident).unwrap();
 
     // Verify incident is in DB
-    let active_inc = inc_repo.get_active_by_alert(alert.id).unwrap().expect("Incident should be active");
+    let active_inc = inc_repo
+        .get_active_by_alert(alert.id)
+        .unwrap()
+        .expect("Incident should be active");
     assert_eq!(active_inc.state, IncidentState::Open);
 
     // STEP 4: Process the incident through NotificationEngine
     // This should detect the MaintenanceWindow and suppress the notification
-    notif_eng.process_incident(&active_inc, Some(rule_id), Some(vm_id), Some(resource_id), Some(metric_id)).unwrap();
+    notif_eng
+        .process_incident(
+            &active_inc,
+            Some(rule_id),
+            Some(vm_id),
+            Some(resource_id),
+            Some(metric_id),
+        )
+        .unwrap();
 
     // STEP 5: Verify no notifications were generated
-    let notifs_count: i64 = conn.query_row("SELECT COUNT(*) FROM notifications", [], |row| row.get(0)).unwrap();
-    assert_eq!(notifs_count, 0, "Notification should be suppressed by MaintenanceWindow");
+    let notifs_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM notifications", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        notifs_count, 0,
+        "Notification should be suppressed by MaintenanceWindow"
+    );
 
     // The incident should STILL be open (visible in UI, just no alerts sent)
-    let active_inc_after = inc_repo.get_active_by_alert(alert.id).unwrap().expect("Incident should still be active");
+    let active_inc_after = inc_repo
+        .get_active_by_alert(alert.id)
+        .unwrap()
+        .expect("Incident should still be active");
     assert_eq!(active_inc_after.state, IncidentState::Open);
 }

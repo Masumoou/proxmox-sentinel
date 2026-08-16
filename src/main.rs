@@ -15,8 +15,8 @@ use anyhow::Result;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-mod domain;
 mod db;
+mod domain;
 
 mod alert_channels;
 mod alert_rules;
@@ -91,4 +91,3 @@ async fn main() -> Result<()> {
 mod integration_1_telemetry_gap;
 #[cfg(test)]
 mod integration_2_maintenance_suppression;
-

@@ -1,6 +1,6 @@
-﻿use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum AlertState {
@@ -17,4 +17,3 @@ pub struct Alert {
     pub fired_at: Option<DateTime<Utc>>,
     pub resolved_at: Option<DateTime<Utc>>,
 }
-

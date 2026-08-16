@@ -1,24 +1,18 @@
 use anyhow::Result;
 use tracing::debug;
 
-use crate::domain::incident::Incident;
 use crate::db::sqlite::repository::{
-    AlertRepository,
-    RuleRepository,
-    MetricRepository,
-use crate::db::sqlite::repository::IncidentCorrelationRepository;
+    AlertRepository, IncidentCorrelationRepository, MetricRepository, RuleRepository,
+};
+use crate::domain::incident::Incident;
 
 pub struct InhibitionEngine<'a> {
     correlation_repo: &'a IncidentCorrelationRepository<'a>,
 }
 
 impl<'a> InhibitionEngine<'a> {
-    pub fn new(
-        correlation_repo: &'a IncidentCorrelationRepository<'a>,
-    ) -> Self {
-        Self {
-            correlation_repo,
-        }
+    pub fn new(correlation_repo: &'a IncidentCorrelationRepository<'a>) -> Self {
+        Self { correlation_repo }
     }
 
     /// Evaluates if an incident is currently inhibited by a higher-level root cause incident.
@@ -26,13 +20,11 @@ impl<'a> InhibitionEngine<'a> {
     pub fn is_incident_inhibited(&self, incident: &Incident) -> Result<bool> {
         // If a correlation relationship has been created for this incident acting as a child,
         // it means the Correlation Engine identified a root cause. Therefore, it is inhibited.
-        
+
         if let Some(correlation) = self.correlation_repo.get_by_child_id(incident.id)? {
             debug!(
-                "Incident {} inhibited by root cause parent {} (Reason: {})", 
-                incident.id, 
-                correlation.parent_incident_id,
-                correlation.reason
+                "Incident {} inhibited by root cause parent {} (Reason: {})",
+                incident.id, correlation.parent_incident_id, correlation.reason
             );
             return Ok(true);
         }
@@ -44,9 +36,9 @@ impl<'a> InhibitionEngine<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
-    use chrono::Utc;
     use crate::domain::incident::IncidentState;
+    use chrono::Utc;
+    use uuid::Uuid;
 
     fn mock_incident() -> Incident {
         Incident {
@@ -64,8 +56,8 @@ mod tests {
         // - Inhibition doesn't alter the Incident state (it remains Open)
         let incident = mock_incident();
         assert_eq!(incident.state, IncidentState::Open);
-        
-        // - We do not test the DB hierarchy lookups here, but we guarantee that 
+
+        // - We do not test the DB hierarchy lookups here, but we guarantee that
         // inhibition strictly evaluates suppression state dynamically rather than permanently
         // marking the incident as "muted".
     }

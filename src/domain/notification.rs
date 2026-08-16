@@ -1,7 +1,7 @@
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
 use crate::domain::monitor::ConfigState;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NotificationChannel {
@@ -44,4 +44,3 @@ pub struct Notification {
     pub success: bool,
     pub error_message: Option<String>,
 }
-

@@ -15,5 +15,10 @@ pub struct CollectorResult {
 #[async_trait]
 pub trait Collector: Send + Sync {
     /// Given a node, proxmox_vmid, and the resource identifier, collect the state.
-    async fn collect(&self, node: &str, proxmox_vmid: u32, identifier: &str) -> Result<CollectorResult>;
+    async fn collect(
+        &self,
+        node: &str,
+        proxmox_vmid: u32,
+        identifier: &str,
+    ) -> Result<CollectorResult>;
 }

@@ -1,6 +1,6 @@
-﻿use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum MaintenanceScopeType {
@@ -19,4 +19,3 @@ pub struct MaintenanceWindow {
     pub end_time: DateTime<Utc>,
     pub created_by: String,
 }
-

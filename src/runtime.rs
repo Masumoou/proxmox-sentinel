@@ -164,7 +164,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                 telemetry_repo: &repo,
                 snapshot,
             };
-            
+
             loop {
                 if let Err(e) = exporter.update_snapshot() {
                     tracing::warn!("Failed to update prometheus snapshot: {}", e);
