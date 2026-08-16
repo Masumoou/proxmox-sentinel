@@ -151,7 +151,165 @@ impl<'a> IncidentRepository<'a> {
         self.conn.query_row("SELECT id, alert_id, state, severity, created_at, resolved_at FROM incidents WHERE alert_id = ?1 AND state != 'RESOLVED'", params![uuid_to_string(alert_id)], |row| Ok(Incident { id: string_to_uuid(row.get(0)?), alert_id: string_to_uuid(row.get(1)?), state: str_to_incident_state(&row.get::<_, String>(2)?), severity: row.get(3)?, created_at: string_to_dt(row.get(4)?), resolved_at: opt_string_to_dt(row.get(5)?) })).optional()
     }
 }
-獵⁥牣瑡㩥携浯楡㩮洺楡瑮湥湡散㨺䵻楡瑮湥湡散楗摮睯‬慍湩整慮据卥潣数祔数㭽ਊ異⁢湦猠潣数瑟灹彥潴獟牴猨›慍湩整慮据卥潣数祔数 㸭☠猧慴楴⁣瑳⁲੻††慭捴⁨⁳੻††††慍湩整慮据卥潣数祔数㨺汇扯污㴠‾䜢佌䅂≌ਬ††††慍湩整慮据卥潣数祔数㨺浖㴠‾嘢≍ਬ††††慍湩整慮据卥潣数祔数㨺敒潳牵散㴠‾刢卅問䍒≅ਬ††††慍湩整慮据卥潣数祔数㨺畒敬㴠‾刢䱕≅ਬ††੽੽異⁢湦猠牴瑟彯捳灯彥祴数猨›猦牴 㸭䴠楡瑮湥湡散捓灯呥灹⁥੻††慭捴⁨⁳੻††††䜢佌䅂≌㴠‾慍湩整慮据卥潣数祔数㨺汇扯污ਬ††††嘢≍㴠‾慍湩整慮据卥潣数祔数㨺浖ਬ††††刢卅問䍒≅㴠‾慍湩整慮据卥潣数祔数㨺敒潳牵散ਬ††††刢䱕≅㴠‾慍湩整慮据卥潣数祔数㨺畒敬ਬ†††† 㸽䴠楡瑮湥湡散捓灯呥灹㩥䜺潬慢ⱬ †素紊ਊ異⁢瑳畲瑣䴠楡瑮湥湡散楗摮睯敒潰楳潴祲✼㹡笠瀠扵挠湯㩮☠愧䌠湯敮瑣潩⁮੽浩汰✼㹡䴠楡瑮湥湡散楗摮睯敒潰楳潴祲✼㹡笠 †瀠扵映⁮敮⡷潣湮›✦⁡潃湮捥楴湯 㸭匠汥⁦⁻敓晬笠挠湯⁮⁽੽†† †瀠扵映⁮湩敳瑲☨敳晬‬楷摮睯›䴦楡瑮湥湡散楗摮睯 㸭删獥汵㱴⤨‾੻††††敳晬挮湯⹮硥捥瑵⡥䤢华剅⁔义佔洠楡瑮湥湡散睟湩潤獷⠠摩‬捳灯彥祴数‬捳灯彥摩‬瑳牡彴楴敭‬湥彤楴敭‬牣慥整彤祢 䅖啌卅⠠ㄿ‬㈿‬㌿‬㐿‬㔿‬㘿∩‬慰慲獭嬡畵摩瑟彯瑳楲杮眨湩潤⹷摩Ⱙ猠潣数瑟灹彥潴獟牴眨湩潤⹷捳灯彥祴数Ⱙ眠湩潤⹷捳灯彥摩洮灡用極彤潴獟牴湩⥧‬瑤瑟彯瑳楲杮眨湩潤⹷瑳牡彴楴敭Ⱙ搠彴潴獟牴湩⡧楷摮睯攮摮瑟浩⥥‬楷摮睯挮敲瑡摥扟嵹㼩※歏⠨⤩ †素ਊ††異⁢湦朠瑥慟瑣癩⡥猦汥⥦ⴠ‾敒畳瑬嘼捥䴼楡瑮湥湡散楗摮睯㸾笠 †††氠瑥渠睯㴠搠彴潴獟牴湩⡧瑕㩣渺睯⤨㬩 †††氠瑥洠瑵猠浴⁴‽敳晬挮湯⹮牰灥牡⡥匢䱅䍅⁔摩‬捳灯彥祴数‬捳灯彥摩‬瑳牡彴楴敭‬湥彤楴敭‬牣慥整彤祢䘠佒⁍慭湩整慮据彥楷摮睯⁳䡗剅⁅瑳牡彴楴敭㰠‽ㄿ䄠䑎攠摮瑟浩⁥㴾㼠∱㼩਻††††敬⁴潲獷㴠猠浴⹴畱牥役慭⡰慰慲獭嬡潮嵷‬牼睯⁼੻††††††歏䴨楡瑮湥湡散楗摮睯笠 †††††††椠㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤰⤿ਬ††††††††捳灯彥祴数›瑳彲潴獟潣数瑟灹⡥爦睯朮瑥㨺弼‬瑓楲杮⠾⤱⤿ਬ††††††††捳灯彥摩›灯彴瑳楲杮瑟彯畵摩爨睯朮瑥㈨㼩Ⱙ †††††††猠慴瑲瑟浩㩥猠牴湩彧潴摟⡴潲⹷敧⡴⤳⤿ਬ††††††††湥彤楴敭›瑳楲杮瑟彯瑤爨睯朮瑥㐨㼩Ⱙ †††††††挠敲瑡摥扟㩹爠睯朮瑥㔨㼩ਬ††††††⥽ †††素㼩਻††††敬⁴畭⁴敲畳瑬⁳‽敖㩣渺睥⤨※潦⁲潲⁷湩爠睯⁳⁻敲畳瑬⹳異桳爨睯⤿※⁽歏爨獥汵獴਩††੽੽昊⁮灯彴瑳楲杮瑟彯畵摩猨›灏楴湯匼牴湩㹧 㸭传瑰潩㱮畕摩‾⁻⹳慭⡰瑳楲杮瑟彯畵摩 ੽⼊ 摁楤楴湯污栠汥数⁲畱牥敩⁳潦⁲牴捡湩⁧敲慬楴湯桳灩ੳ浩汰✼㹡䄠敬瑲敒潰楳潴祲✼㹡笠 †瀠扵映⁮敧彴祢楟⡤猦汥ⱦ椠㩤唠極⥤ⴠ‾敒畳瑬似瑰潩㱮汁牥㹴‾੻††††敳晬挮湯⹮畱牥役潲⡷匢䱅䍅⁔摩‬畲敬楟Ɽ猠慴整‬牣慥整彤瑡‬灵慤整彤瑡䘠佒⁍污牥獴圠䕈䕒椠⁤‽ㄿⰢ瀠牡浡ⅳ畛極彤潴獟牴湩⡧摩崩‬牼睯⁼歏䄨敬瑲笠椠㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤰⤿‬畲敬楟㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤱⤿‬瑳瑡㩥猠牴瑟彯污牥彴瑳瑡⡥爦睯朮瑥㨺弼‬瑓楲杮⠾⤲⤿‬牣慥整彤瑡›瑳楲杮瑟彯瑤爨睯朮瑥㌨㼩Ⱙ甠摰瑡摥慟㩴猠牴湩彧潴摟⡴潲⹷敧⡴⤴⤿素⤩漮瑰潩慮⡬਩††੽੽椊灭㱬愧‾畒敬敒潰楳潴祲✼㹡笠 †瀠扵映⁮敧彴祢楟⡤猦汥ⱦ椠㩤唠極⥤ⴠ‾敒畳瑬似瑰潩㱮畒敬㸾笠 †††猠汥⹦潣湮焮敵祲牟睯∨䕓䕌呃椠Ɽ洠瑥楲彣摩‬瑳瑡ⱥ漠数慲潴Ⱳ映物彥慶畬ⱥ映物彥畤慲楴湯獟捥ⱳ爠獥汯敶癟污敵‬敲潳癬彥畤慲楴湯獟捥ⱳ猠癥牥瑩ⱹ瘠牥楳湯‬牣慥整彤瑡‬灵慤整彤瑡‬敤敬整彤瑡䘠佒⁍畲敬⁳䡗剅⁅摩㴠㼠∱‬慰慲獭嬡畵摩瑟彯瑳楲杮椨⥤ⱝ簠潲籷传⡫畒敬笠椠㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤰⤿‬敭牴捩楟㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤱⤿‬瑳瑡㩥猠牴瑟彯潣普杩獟慴整☨潲⹷敧㩴㰺ⱟ匠牴湩㹧㈨㼩Ⱙ漠数慲潴㩲猠牴瑟彯灯牥瑡牯☨潲⹷敧㩴㰺ⱟ匠牴湩㹧㌨㼩Ⱙ映物彥慶畬㩥爠睯朮瑥㐨㼩‬楦敲摟牵瑡潩彮敳獣›潲⹷敧⡴⤵ⰿ爠獥汯敶癟污敵›潲⹷敧⡴⤶ⰿ爠獥汯敶摟牵瑡潩彮敳獣›潲⹷敧⡴⤷ⰿ猠癥牥瑩㩹爠睯朮瑥㠨㼩‬敶獲潩㩮爠睯朮瑥㤨㼩‬牣慥整彤瑡›瑳楲杮瑟彯瑤爨睯朮瑥ㄨ⤰⤿‬灵慤整彤瑡›瑳楲杮瑟彯瑤爨睯朮瑥ㄨ⤱⤿‬敤敬整彤瑡›灯彴瑳楲杮瑟彯瑤爨睯朮瑥ㄨ⤲⤿素⤩漮瑰潩慮⡬਩††੽੽椊灭㱬愧‾敍牴捩敒潰楳潴祲✼㹡笠 †瀠扵映⁮敧彴祢楟⡤猦汥ⱦ椠㩤唠極⥤ⴠ‾敒畳瑬似瑰潩㱮敍牴捩㸾笠 †††猠汥⹦潣湮焮敵祲牟睯∨䕓䕌呃椠Ɽ洠湯瑩牯楟Ɽ渠浡ⱥ瘠污敵瑟灹ⱥ甠楮⁴剆䵏洠瑥楲獣圠䕈䕒椠⁤‽ㄿⰢ瀠牡浡ⅳ畛極彤潴獟牴湩⡧摩崩‬牼睯⁼歏䴨瑥楲⁣⁻摩›瑳楲杮瑟彯畵摩爨睯朮瑥〨㼩Ⱙ洠湯瑩牯楟㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤱⤿‬慮敭›潲⹷敧⡴⤲ⰿ瘠污敵瑟灹㩥猠牴瑟彯慶畬彥祴数☨潲⹷敧㩴㰺ⱟ匠牴湩㹧㌨㼩Ⱙ甠楮㩴爠睯朮瑥㐨㼩素⤩漮瑰潩慮⡬਩††੽੽椊灭㱬愧‾潍楮潴割灥獯瑩牯㱹愧‾੻††異⁢湦朠瑥扟役摩☨敳晬‬摩›畕摩 㸭删獥汵㱴灏楴湯䴼湯瑩牯㸾笠 †††猠汥⹦潣湮焮敵祲牟睯∨䕓䕌呃椠Ɽ爠獥畯捲彥摩‬瑳瑡ⱥ椠瑮牥慶彬敳獣‬潣汬捥楴湯瑟灹ⱥ瘠牥楳湯‬牣慥整彤瑡‬灵慤整彤瑡‬敤敬整彤瑡䘠佒⁍潭楮潴獲圠䕈䕒椠⁤‽ㄿⰢ瀠牡浡ⅳ畛極彤潴獟牴湩⡧摩崩‬牼睯⁼歏䴨湯瑩牯笠椠㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤰⤿‬敲潳牵散楟㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤱⤿‬瑳瑡㩥猠牴瑟彯潣普杩獟慴整☨潲⹷敧㩴㰺ⱟ匠牴湩㹧㈨㼩Ⱙ椠瑮牥慶彬敳獣›潲⹷敧⡴⤳ⰿ挠汯敬瑣潩彮祴数›潲⹷敧⡴⤴ⰿ瘠牥楳湯›潲⹷敧⡴⤵ⰿ挠敲瑡摥慟㩴猠牴湩彧潴摟⡴潲⹷敧⡴⤶⤿‬灵慤整彤瑡›瑳楲杮瑟彯瑤爨睯朮瑥㜨㼩Ⱙ搠汥瑥摥慟㩴漠瑰獟牴湩彧潴摟⡴潲⹷敧⡴⤸⤿素⤩漮瑰潩慮⡬਩††੽੽਍獵⁥牣瑡㩥携浯楡㩮渺瑯晩捩瑡潩㩮为瑯晩捩瑡潩㭮ਊ異⁢瑳畲瑣丠瑯晩捩瑡潩剮灥獯瑩牯㱹愧‾⁻異⁢潣湮›✦⁡潃湮捥楴湯素椊灭㱬愧‾潎楴楦慣楴湯敒潰楳潴祲✼㹡笠 †瀠扵映⁮敮⡷潣湮›✦⁡潃湮捥楴湯 㸭匠汥⁦⁻敓晬笠挠湯⁮⁽੽†† †瀠扵映⁮湩敳瑲☨敳晬‬潮楴㩦☠潎楴楦慣楴湯 㸭删獥汵㱴⤨‾੻††††敳晬挮湯⹮硥捥瑵⡥䤢华剅⁔义佔渠瑯晩捩瑡潩獮⠠摩‬湩楣敤瑮楟Ɽ挠慨湮汥楟Ɽ猠湥彴瑡‬畳捣獥ⱳ攠牲牯浟獥慳敧 䅖啌卅⠠ㄿ‬㈿‬㌿‬㐿‬㔿‬㘿∩‬慰慲獭嬡畵摩瑟彯瑳楲杮渨瑯晩椮⥤‬畵摩瑟彯瑳楲杮渨瑯晩椮据摩湥彴摩Ⱙ甠極彤潴獟牴湩⡧潮楴⹦档湡敮彬摩Ⱙ搠彴潴獟牴湩⡧潮楴⹦敳瑮慟⥴‬潮楴⹦畳捣獥ⱳ渠瑯晩攮牲牯浟獥慳敧⥝㬿传⡫⤨਩††੽ൽ甊敳爠獵汱瑩㩥刺獥汵㭴甊敳猠摴㨺潣汬捥楴湯㩳䠺獡䵨灡਻椊灭㱬愧‾敔敬敭牴剹灥獯瑩牯㱹愧‾੻††異⁢湦朠瑥江瑡獥彴潦彲敭牴捩☨敳晬‬敭牴捩楟㩤唠極⥤ⴠ‾敒畳瑬似瑰潩㱮敔敬敭牴㹹‾੻††††敳晬挮湯⹮畱牥役潲⡷ †††††∠䕓䕌呃椠Ɽ洠瑥楲彣摩‬楴敭瑳浡Ɒ瘠污敵‬瑳楲杮癟污敵‬扯敳癲瑡潩Ɱ氠扡汥⁳ ††††††剆䵏琠汥浥瑥祲圠䕈䕒洠瑥楲彣摩㴠㼠‱剏䕄⁒奂琠浩獥慴灭䐠卅⁃䥌䥍⁔∱ਬ††††††慰慲獭嬡畵摩瑟彯瑳楲杮洨瑥楲彣摩崩ਬ††††††牼睯⁼歏吨汥浥瑥祲笠 †††††††椠㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤰⤿ਬ††††††††敭牴捩楟㩤猠牴湩彧潴畟極⡤潲⹷敧⡴⤱⤿ਬ††††††††楴敭瑳浡㩰猠牴湩彧潴摟⡴潲⹷敧⡴⤲⤿ਬ††††††††慶畬㩥爠睯朮瑥㌨㼩ਬ††††††††瑳楲杮癟污敵›潲⹷敧⡴⤴ⰿ †††††††漠獢牥慶楴湯›瑳彲潴潟獢牥慶楴湯☨潲⹷敧㩴㰺ⱟ匠牴湩㹧㔨㼩Ⱙ †††††††氠扡汥㩳爠睯朮瑥㘨㼩 †††††素਩††††⸩灯楴湯污⤨ †素紊਍異⁢瑳畲瑣䔠灸牯整兲敵楲獥✼㹡笠瀠扵挠湯㩮☠愧䌠湯敮瑣潩⁮੽浩汰✼㹡䔠灸牯整兲敵楲獥✼㹡笠 †瀠扵映⁮敮⡷潣湮›✦⁡潃湮捥楴湯 㸭匠汥⁦⁻敓晬笠挠湯⁮⁽੽ †瀠扵映⁮敧彴潭楮潴敲彤敭牴捩⡳猦汥⥦ⴠ‾敒畳瑬嘼捥⠼畕摩‬畕摩‬瑓楲杮‬瑓楲杮‬瑓楲杮㸩‾੻††††⼯删瑥牵獮›敭牴捩楟Ɽ瘠彭摩‬敲潳牵散歟湩Ɽ爠獥畯捲彥摩湥楴楦牥‬敭牴捩湟浡੥††††敬⁴畭⁴瑳瑭㴠猠汥⹦潣湮瀮敲慰敲∨ †††††匠䱅䍅⁔⹭摩‬⹲浶楟Ɽ爠欮湩Ɽ爠椮敤瑮晩敩Ⱳ洠渮浡⁥ †††††䘠佒⁍敭牴捩⁳੭††††††佊义洠湯瑩牯⁳潭传⁎⹭潭楮潴彲摩㴠洠⹯摩 †††††䨠䥏⁎敲潳牵散⁳⁲乏洠⹯敲潳牵散楟⁤‽⹲摩 †††††圠䕈䕒爠献慴整㴠✠位䥎佔䕒❄䄠䑎洠⹯瑳瑡⁥‽䔧䅎䱂䑅‧乁⁄潭搮汥瑥摥慟⁴卉丠䱕⁌乁⁄⹲敤敬整彤瑡䤠⁓啎䱌 †††∠㼩਻††††敬⁴潲獷㴠猠浴⹴畱牥役慭⡰嵛‬牼睯⁼੻††††††歏⠨ †††††††猠牴湩彧潴畟極⡤潲⹷敧⡴⤰⤿ਬ††††††††瑳楲杮瑟彯畵摩爨睯朮瑥ㄨ㼩Ⱙ †††††††爠睯朮瑥㈨㼩ਬ††††††††潲⹷敧⡴⤳ⰿ †††††††爠睯朮瑥㐨㼩ਬ††††††⤩ †††素㼩਻††††敬⁴畭⁴敲畳瑬⁳‽敖㩣渺睥⤨※潦⁲潲⁷湩爠睯⁳⁻敲畳瑬⹳異桳爨睯⤿※⁽歏爨獥汵獴਩††੽ൽ椊灭㱬愧‾硅潰瑲牥畑牥敩㱳愧‾੻††異⁢湦朠瑥浟湯瑩牯摥浟瑥楲獣睟瑩彨浶☨敳晬 㸭删獥汵㱴敖㱣唨極Ɽ甠㈳‬瑓楲杮‬瑓楲杮‬瑓楲杮‬瑓楲杮㸩‾੻††††⼯删瑥牵獮›敭牴捩楟Ɽ瀠潲浸硯癟業Ɽ瘠彭慮敭‬敲潳牵散歟湩Ɽ爠獥畯捲彥摩湥楴楦牥‬敭牴捩湟浡੥††††敬⁴畭⁴瑳瑭㴠猠汥⹦潣湮瀮敲慰敲∨ †††††匠䱅䍅⁔⹭摩‬⹶牰硯潭彸浶摩‬⹶慮敭‬⹲楫摮‬⹲摩湥楴楦牥‬⹭慮敭ਠ††††††剆䵏洠瑥楲獣洠 †††††䨠䥏⁎潭楮潴獲洠⁯乏洠洮湯瑩牯楟⁤‽潭椮੤††††††佊义爠獥畯捲獥爠传⁎潭爮獥畯捲彥摩㴠爠椮੤††††††佊义瘠獭瘠传⁎⹲浶楟⁤‽⹶摩 †††††圠䕈䕒爠献慴整㴠✠位䥎佔䕒❄䄠䑎洠⹯瑳瑡⁥‽䔧䅎䱂䑅‧乁⁄潭搮汥瑥摥慟⁴卉丠䱕⁌乁⁄⹲敤敬整彤瑡䤠⁓啎䱌 †††∠㼩਻††††敬⁴潲獷㴠猠浴⹴畱牥役慭⡰嵛‬牼睯⁼੻††††††歏⠨ †††††††猠牴湩彧潴畟極⡤潲⹷敧⡴⤰⤿ਬ††††††††潲⹷敧⡴⤱ⰿ †††††††爠睯朮瑥㈨㼩ਬ††††††††潲⹷敧⡴⤳ⰿ †††††††爠睯朮瑥㐨㼩ਬ††††††††潲⹷敧⡴⤵ⰿ †††††⤠਩††††⥽㬿 †††氠瑥洠瑵爠獥汵獴㴠嘠捥㨺敮⡷㬩映牯爠睯椠⁮潲獷笠爠獥汵獴瀮獵⡨潲㽷㬩素传⡫敲畳瑬⥳ †素紊਍
+use crate::domain::maintenance::{MaintenanceWindow, MaintenanceScopeType};
+
+pub fn scope_type_to_str(s: MaintenanceScopeType) -> &'static str {
+    match s {
+        MaintenanceScopeType::Global => "GLOBAL",
+        MaintenanceScopeType::Vm => "VM",
+        MaintenanceScopeType::Resource => "RESOURCE",
+        MaintenanceScopeType::Rule => "RULE",
+    }
+}
+pub fn str_to_scope_type(s: &str) -> MaintenanceScopeType {
+    match s {
+        "GLOBAL" => MaintenanceScopeType::Global,
+        "VM" => MaintenanceScopeType::Vm,
+        "RESOURCE" => MaintenanceScopeType::Resource,
+        "RULE" => MaintenanceScopeType::Rule,
+        _ => MaintenanceScopeType::Global,
+    }
+}
+
+pub struct MaintenanceWindowRepository<'a> { pub conn: &'a Connection }
+impl<'a> MaintenanceWindowRepository<'a> {
+    pub fn new(conn: &'a Connection) -> Self { Self { conn } }
+    
+    pub fn insert(&self, window: &MaintenanceWindow) -> Result<()> {
+        self.conn.execute("INSERT INTO maintenance_windows (id, scope_type, scope_id, start_time, end_time, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![uuid_to_string(window.id), scope_type_to_str(window.scope_type), window.scope_id.map(uuid_to_string), dt_to_string(window.start_time), dt_to_string(window.end_time), window.created_by])?; Ok(())
+    }
+
+    pub fn get_active(&self) -> Result<Vec<MaintenanceWindow>> {
+        let now = dt_to_string(Utc::now());
+        let mut stmt = self.conn.prepare("SELECT id, scope_type, scope_id, start_time, end_time, created_by FROM maintenance_windows WHERE start_time <= ?1 AND end_time >= ?1")?;
+        let rows = stmt.query_map(params![now], |row| {
+            Ok(MaintenanceWindow {
+                id: string_to_uuid(row.get(0)?),
+                scope_type: str_to_scope_type(&row.get::<_, String>(1)?),
+                scope_id: opt_string_to_uuid(row.get(2)?),
+                start_time: string_to_dt(row.get(3)?),
+                end_time: string_to_dt(row.get(4)?),
+                created_by: row.get(5)?,
+            })
+        })?;
+        let mut results = Vec::new(); for row in rows { results.push(row?); } Ok(results)
+    }
+}
+
+fn opt_string_to_uuid(s: Option<String>) -> Option<Uuid> { s.map(string_to_uuid) }
+
+// Additional helper queries for tracing relationships
+impl<'a> AlertRepository<'a> {
+    pub fn get_by_id(&self, id: Uuid) -> Result<Option<Alert>> {
+        self.conn.query_row("SELECT id, rule_id, state, created_at, updated_at FROM alerts WHERE id = ?1", params![uuid_to_string(id)], |row| Ok(Alert { id: string_to_uuid(row.get(0)?), rule_id: string_to_uuid(row.get(1)?), state: str_to_alert_state(&row.get::<_, String>(2)?), created_at: string_to_dt(row.get(3)?), updated_at: string_to_dt(row.get(4)?) })).optional()
+    }
+}
+
+impl<'a> RuleRepository<'a> {
+    pub fn get_by_id(&self, id: Uuid) -> Result<Option<Rule>> {
+        self.conn.query_row("SELECT id, metric_id, state, operator, fire_value, fire_duration_secs, resolve_value, resolve_duration_secs, severity, version, created_at, updated_at, deleted_at FROM rules WHERE id = ?1", params![uuid_to_string(id)], |row| Ok(Rule { id: string_to_uuid(row.get(0)?), metric_id: string_to_uuid(row.get(1)?), state: str_to_config_state(&row.get::<_, String>(2)?), operator: str_to_operator(&row.get::<_, String>(3)?), fire_value: row.get(4)?, fire_duration_secs: row.get(5)?, resolve_value: row.get(6)?, resolve_duration_secs: row.get(7)?, severity: row.get(8)?, version: row.get(9)?, created_at: string_to_dt(row.get(10)?), updated_at: string_to_dt(row.get(11)?), deleted_at: opt_string_to_dt(row.get(12)?) })).optional()
+    }
+}
+
+impl<'a> MetricRepository<'a> {
+    pub fn get_by_id(&self, id: Uuid) -> Result<Option<Metric>> {
+        self.conn.query_row("SELECT id, monitor_id, name, value_type, unit FROM metrics WHERE id = ?1", params![uuid_to_string(id)], |row| Ok(Metric { id: string_to_uuid(row.get(0)?), monitor_id: string_to_uuid(row.get(1)?), name: row.get(2)?, value_type: str_to_value_type(&row.get::<_, String>(3)?), unit: row.get(4)? })).optional()
+    }
+}
+
+impl<'a> MonitorRepository<'a> {
+    pub fn get_by_id(&self, id: Uuid) -> Result<Option<Monitor>> {
+        self.conn.query_row("SELECT id, resource_id, state, interval_secs, collection_type, version, created_at, updated_at, deleted_at FROM monitors WHERE id = ?1", params![uuid_to_string(id)], |row| Ok(Monitor { id: string_to_uuid(row.get(0)?), resource_id: string_to_uuid(row.get(1)?), state: str_to_config_state(&row.get::<_, String>(2)?), interval_secs: row.get(3)?, collection_type: row.get(4)?, version: row.get(5)?, created_at: string_to_dt(row.get(6)?), updated_at: string_to_dt(row.get(7)?), deleted_at: opt_string_to_dt(row.get(8)?) })).optional()
+    }
+}
+
+
+use crate::domain::notification::Notification;
+
+pub struct NotificationRepository<'a> { pub conn: &'a Connection }
+impl<'a> NotificationRepository<'a> {
+    pub fn new(conn: &'a Connection) -> Self { Self { conn } }
+    
+    pub fn insert(&self, notif: &Notification) -> Result<()> {
+        self.conn.execute("INSERT INTO notifications (id, incident_id, channel_id, sent_at, success, error_message) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![uuid_to_string(notif.id), uuid_to_string(notif.incident_id), uuid_to_string(notif.channel_id), dt_to_string(notif.sent_at), notif.success, notif.error_message])?; Ok(())
+    }
+}
+
+use rusqlite::Result;
+use std::collections::HashMap;
+
+impl<'a> TelemetryRepository<'a> {
+    pub fn get_latest_for_metric(&self, metric_id: Uuid) -> Result<Option<Telemetry>> {
+        self.conn.query_row(
+            "SELECT id, metric_id, timestamp, value, string_value, observation, labels 
+             FROM telemetry WHERE metric_id = ?1 ORDER BY timestamp DESC LIMIT 1",
+            params![uuid_to_string(metric_id)],
+            |row| Ok(Telemetry {
+                id: string_to_uuid(row.get(0)?),
+                metric_id: string_to_uuid(row.get(1)?),
+                timestamp: string_to_dt(row.get(2)?),
+                value: row.get(3)?,
+                string_value: row.get(4)?,
+                observation: str_to_observation(&row.get::<_, String>(5)?),
+                labels: row.get(6)?
+            })
+        ).optional()
+    }
+}
+
+pub struct ExporterQueries<'a> { pub conn: &'a Connection }
+impl<'a> ExporterQueries<'a> {
+    pub fn new(conn: &'a Connection) -> Self { Self { conn } }
+
+    pub fn get_monitored_metrics(&self) -> Result<Vec<(Uuid, Uuid, String, String, String)>> {
+        // Returns: metric_id, vm_id, resource_kind, resource_identifier, metric_name
+        let mut stmt = self.conn.prepare("
+            SELECT m.id, r.vm_id, r.kind, r.identifier, m.name 
+            FROM metrics m
+            JOIN monitors mo ON m.monitor_id = mo.id
+            JOIN resources r ON mo.resource_id = r.id
+            WHERE r.state = 'MONITORED' AND mo.state = 'ENABLED' AND mo.deleted_at IS NULL AND r.deleted_at IS NULL
+        ")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                string_to_uuid(row.get(0)?),
+                string_to_uuid(row.get(1)?),
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?;
+        let mut results = Vec::new(); for row in rows { results.push(row?); } Ok(results)
+    }
+}
+
+impl<'a> ExporterQueries<'a> {
+    pub fn get_monitored_metrics_with_vm(&self) -> Result<Vec<(Uuid, u32, String, String, String, String)>> {
+        // Returns: metric_id, proxmox_vmid, vm_name, resource_kind, resource_identifier, metric_name
+        let mut stmt = self.conn.prepare("
+            SELECT m.id, v.proxmox_vmid, v.name, r.kind, r.identifier, m.name 
+            FROM metrics m
+            JOIN monitors mo ON m.monitor_id = mo.id
+            JOIN resources r ON mo.resource_id = r.id
+            JOIN vms v ON r.vm_id = v.id
+            WHERE r.state = 'MONITORED' AND mo.state = 'ENABLED' AND mo.deleted_at IS NULL AND r.deleted_at IS NULL
+        ")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                string_to_uuid(row.get(0)?),
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?;
+        let mut results = Vec::new(); for row in rows { results.push(row?); } Ok(results)
+    }
+}
+
+
+ 
 use crate::domain::incident::{IncidentCorrelation, CorrelationType};
 
 pub fn str_to_correlation_type(s: &str) -> CorrelationType {

@@ -89,4 +89,6 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod integration_1_telemetry_gap;
+#[cfg(test)]
+mod integration_2_maintenance_suppression;
 
