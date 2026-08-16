@@ -4,6 +4,32 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Operator {
+    Equal,
+    NotEqual,
+    GreaterThan,
+    LessThan,
+    GreaterOrEqual,
+    LessOrEqual,
+}
+
+impl std::str::FromStr for Operator {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "==" | "EQ" => Ok(Operator::Equal),
+            "!=" | "NEQ" => Ok(Operator::NotEqual),
+            ">" | "GT" => Ok(Operator::GreaterThan),
+            "<" | "LT" => Ok(Operator::LessThan),
+            ">=" | "GTE" => Ok(Operator::GreaterOrEqual),
+            "<=" | "LTE" => Ok(Operator::LessOrEqual),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Rule {
     pub id: Uuid,
     pub metric_id: Uuid,

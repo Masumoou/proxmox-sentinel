@@ -315,22 +315,26 @@ impl<'a> RuleRepository<'a> {
         Self { conn }
     }
     pub fn list_enabled(&self) -> Result<Vec<Rule>> {
-        let mut stmt = self.conn.prepare("SELECT id, metric_id, state, operator, fire_value, fire_duration_secs, resolve_value, resolve_duration_secs, severity, version, created_at, updated_at, deleted_at FROM rules WHERE state = 'ENABLED' AND deleted_at IS NULL")?;
+        let mut stmt = self.conn.prepare("SELECT id, metric_id, template_id, state, severity, fire_operator, fire_value_type, fire_value, fire_duration_secs, resolve_operator, resolve_value_type, resolve_value, resolve_duration_secs, version, created_at, updated_at, deleted_at FROM rules WHERE state = 'ENABLED' AND deleted_at IS NULL")?;
         let rows = stmt.query_map([], |row| {
             Ok(Rule {
                 id: string_to_uuid(row.get(0)?),
                 metric_id: string_to_uuid(row.get(1)?),
-                state: str_to_config_state(&row.get::<_, String>(2)?),
-                operator: str_to_operator(&row.get::<_, String>(3)?),
-                fire_value: row.get(4)?,
-                fire_duration_secs: row.get(5)?,
-                resolve_value: row.get(6)?,
-                resolve_duration_secs: row.get(7)?,
-                severity: row.get(8)?,
-                version: row.get(9)?,
-                created_at: string_to_dt(row.get(10)?),
-                updated_at: string_to_dt(row.get(11)?),
-                deleted_at: opt_string_to_dt(row.get(12)?),
+                template_id: opt_string_to_uuid(row.get(2)?),
+                state: str_to_config_state(&row.get::<_, String>(3)?),
+                severity: row.get(4)?,
+                fire_operator: row.get(5)?,
+                fire_value_type: row.get(6)?,
+                fire_value: row.get(7)?,
+                fire_duration_secs: row.get(8)?,
+                resolve_operator: row.get(9)?,
+                resolve_value_type: row.get(10)?,
+                resolve_value: row.get(11)?,
+                resolve_duration_secs: row.get(12)?,
+                version: row.get(13)?,
+                created_at: string_to_dt(row.get(14)?),
+                updated_at: string_to_dt(row.get(15)?),
+                deleted_at: opt_string_to_dt(row.get(16)?),
             })
         })?;
         let mut results = Vec::new();
@@ -349,22 +353,27 @@ impl<'a> AlertRepository<'a> {
         Self { conn }
     }
     pub fn insert(&self, alert: &Alert) -> Result<()> {
-        self.conn.execute("INSERT INTO alerts (id, rule_id, state, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![uuid_to_string(alert.id), uuid_to_string(alert.rule_id), alert_state_to_str(alert.state), dt_to_string(alert.created_at), dt_to_string(alert.updated_at)])?;
+        self.conn.execute("INSERT INTO alerts (id, rule_id, state, fired_at, resolved_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![uuid_to_string(alert.id), uuid_to_string(alert.rule_id), alert_state_to_str(alert.state), opt_dt_to_string(alert.fired_at), opt_dt_to_string(alert.resolved_at)])?;
         Ok(())
     }
     pub fn update_state(&self, id: Uuid, state: AlertState) -> Result<()> {
+        let resolved_at = if state == AlertState::Resolved {
+            Some(dt_to_string(Utc::now()))
+        } else {
+            None
+        };
         self.conn.execute(
-            "UPDATE alerts SET state = ?1, updated_at = ?2 WHERE id = ?3",
+            "UPDATE alerts SET state = ?1, resolved_at = COALESCE(?2, resolved_at) WHERE id = ?3",
             params![
                 alert_state_to_str(state),
-                dt_to_string(Utc::now()),
+                resolved_at,
                 uuid_to_string(id)
             ],
         )?;
         Ok(())
     }
     pub fn get_active_by_rule(&self, rule_id: Uuid) -> Result<Option<Alert>> {
-        self.conn.query_row("SELECT id, rule_id, state, created_at, updated_at FROM alerts WHERE rule_id = ?1 AND state = 'FIRING'", params![uuid_to_string(rule_id)], |row| Ok(Alert { id: string_to_uuid(row.get(0)?), rule_id: string_to_uuid(row.get(1)?), state: str_to_alert_state(&row.get::<_, String>(2)?), created_at: string_to_dt(row.get(3)?), updated_at: string_to_dt(row.get(4)?) })).optional()
+        self.conn.query_row("SELECT id, rule_id, state, fired_at, resolved_at FROM alerts WHERE rule_id = ?1 AND state = 'FIRING'", params![uuid_to_string(rule_id)], |row| Ok(Alert { id: string_to_uuid(row.get(0)?), rule_id: string_to_uuid(row.get(1)?), state: str_to_alert_state(&row.get::<_, String>(2)?), fired_at: opt_string_to_dt(row.get(3)?), resolved_at: opt_string_to_dt(row.get(4)?) })).optional()
     }
 }
 
@@ -376,7 +385,7 @@ impl<'a> IncidentRepository<'a> {
         Self { conn }
     }
     pub fn insert(&self, incident: &Incident) -> Result<()> {
-        self.conn.execute("INSERT INTO incidents (id, alert_id, state, severity, created_at, resolved_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![uuid_to_string(incident.id), uuid_to_string(incident.alert_id), incident_state_to_str(incident.state), incident.severity, dt_to_string(incident.created_at), opt_dt_to_string(incident.resolved_at)])?;
+        self.conn.execute("INSERT INTO incidents (id, alert_id, vm_id, state, started_at, acknowledged_at, resolved_at, acknowledged_by, root_cause_summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", params![uuid_to_string(incident.id), uuid_to_string(incident.alert_id), uuid_to_string(incident.vm_id), incident_state_to_str(incident.state), dt_to_string(incident.started_at), opt_dt_to_string(incident.acknowledged_at), opt_dt_to_string(incident.resolved_at), incident.acknowledged_by.clone(), incident.root_cause_summary.clone()])?;
         Ok(())
     }
     pub fn update_state(&self, id: Uuid, state: IncidentState) -> Result<()> {
@@ -389,7 +398,7 @@ impl<'a> IncidentRepository<'a> {
         Ok(())
     }
     pub fn get_active_by_alert(&self, alert_id: Uuid) -> Result<Option<Incident>> {
-        self.conn.query_row("SELECT id, alert_id, state, severity, created_at, resolved_at FROM incidents WHERE alert_id = ?1 AND state != 'RESOLVED'", params![uuid_to_string(alert_id)], |row| Ok(Incident { id: string_to_uuid(row.get(0)?), alert_id: string_to_uuid(row.get(1)?), state: str_to_incident_state(&row.get::<_, String>(2)?), severity: row.get(3)?, created_at: string_to_dt(row.get(4)?), resolved_at: opt_string_to_dt(row.get(5)?) })).optional()
+        self.conn.query_row("SELECT id, alert_id, vm_id, state, started_at, acknowledged_at, resolved_at, acknowledged_by, root_cause_summary FROM incidents WHERE alert_id = ?1 AND state != 'RESOLVED'", params![uuid_to_string(alert_id)], |row| Ok(Incident { id: string_to_uuid(row.get(0)?), alert_id: string_to_uuid(row.get(1)?), vm_id: string_to_uuid(row.get(2)?), state: str_to_incident_state(&row.get::<_, String>(3)?), started_at: string_to_dt(row.get(4)?), acknowledged_at: opt_string_to_dt(row.get(5)?), resolved_at: opt_string_to_dt(row.get(6)?), acknowledged_by: row.get(7)?, root_cause_summary: row.get(8)? })).optional()
     }
 }
 use crate::domain::maintenance::{MaintenanceScopeType, MaintenanceWindow};
@@ -473,7 +482,7 @@ impl<'a> AlertRepository<'a> {
 
 impl<'a> RuleRepository<'a> {
     pub fn get_by_id(&self, id: Uuid) -> Result<Option<Rule>> {
-        self.conn.query_row("SELECT id, metric_id, state, operator, fire_value, fire_duration_secs, resolve_value, resolve_duration_secs, severity, version, created_at, updated_at, deleted_at FROM rules WHERE id = ?1", params![uuid_to_string(id)], |row| Ok(Rule { id: string_to_uuid(row.get(0)?), metric_id: string_to_uuid(row.get(1)?), state: str_to_config_state(&row.get::<_, String>(2)?), operator: str_to_operator(&row.get::<_, String>(3)?), fire_value: row.get(4)?, fire_duration_secs: row.get(5)?, resolve_value: row.get(6)?, resolve_duration_secs: row.get(7)?, severity: row.get(8)?, version: row.get(9)?, created_at: string_to_dt(row.get(10)?), updated_at: string_to_dt(row.get(11)?), deleted_at: opt_string_to_dt(row.get(12)?) })).optional()
+        self.conn.query_row("SELECT id, metric_id, template_id, state, severity, fire_operator, fire_value_type, fire_value, fire_duration_secs, resolve_operator, resolve_value_type, resolve_value, resolve_duration_secs, version, created_at, updated_at, deleted_at FROM rules WHERE id = ?1", params![uuid_to_string(id)], |row| Ok(Rule { id: string_to_uuid(row.get(0)?), metric_id: string_to_uuid(row.get(1)?), template_id: opt_string_to_uuid(row.get(2)?), state: str_to_config_state(&row.get::<_, String>(3)?), severity: row.get(4)?, fire_operator: row.get(5)?, fire_value_type: row.get(6)?, fire_value: row.get(7)?, fire_duration_secs: row.get(8)?, resolve_operator: row.get(9)?, resolve_value_type: row.get(10)?, resolve_value: row.get(11)?, resolve_duration_secs: row.get(12)?, version: row.get(13)?, created_at: string_to_dt(row.get(14)?), updated_at: string_to_dt(row.get(15)?), deleted_at: opt_string_to_dt(row.get(16)?) })).optional()
     }
 }
 
@@ -519,7 +528,7 @@ impl<'a> NotificationRepository<'a> {
     }
 }
 
-use rusqlite::Result;
+
 use std::collections::HashMap;
 
 impl<'a> TelemetryRepository<'a> {
@@ -664,15 +673,18 @@ impl<'a> IncidentCorrelationRepository<'a> {
 
 impl<'a> IncidentRepository<'a> {
     pub fn list_open_incidents(&self) -> Result<Vec<Incident>> {
-        let mut stmt = self.conn.prepare("SELECT id, alert_id, state, severity, created_at, resolved_at FROM incidents WHERE state = 'OPEN' OR state = 'ACKNOWLEDGED'")?;
+        let mut stmt = self.conn.prepare("SELECT id, alert_id, vm_id, state, started_at, acknowledged_at, resolved_at, acknowledged_by, root_cause_summary FROM incidents WHERE state = 'OPEN' OR state = 'ACKNOWLEDGED'")?;
         let rows = stmt.query_map([], |row| {
             Ok(Incident {
                 id: string_to_uuid(row.get(0)?),
                 alert_id: string_to_uuid(row.get(1)?),
-                state: str_to_incident_state(&row.get::<_, String>(2)?),
-                severity: row.get(3)?,
-                created_at: string_to_dt(row.get(4)?),
-                resolved_at: opt_string_to_dt(row.get(5)?),
+                vm_id: string_to_uuid(row.get(2)?),
+                state: str_to_incident_state(&row.get::<_, String>(3)?),
+                started_at: string_to_dt(row.get(4)?),
+                acknowledged_at: opt_string_to_dt(row.get(5)?),
+                resolved_at: opt_string_to_dt(row.get(6)?),
+                acknowledged_by: row.get(7)?,
+                root_cause_summary: row.get(8)?,
             })
         })?;
         let mut results = Vec::new();
@@ -680,23 +692,6 @@ impl<'a> IncidentRepository<'a> {
             results.push(row?);
         }
         Ok(results)
-    }
-}
-
-impl<'a> ResourceRepository<'a> {
-    pub fn get_by_id(&self, id: Uuid) -> Result<Option<crate::domain::resource::Resource>> {
-        self.conn.query_row("SELECT id, vm_id, kind, identifier, state, created_at, updated_at, deleted_at FROM resources WHERE id = ?1", params![uuid_to_string(id)], |row| {
-            Ok(crate::domain::resource::Resource {
-                id: string_to_uuid(row.get(0)?),
-                vm_id: string_to_uuid(row.get(1)?),
-                kind: row.get(2)?,
-                identifier: row.get(3)?,
-                state: str_to_resource_state(&row.get::<_, String>(4)?),
-                created_at: string_to_dt(row.get(5)?),
-                updated_at: string_to_dt(row.get(6)?),
-                deleted_at: opt_string_to_dt(row.get(7)?)
-            })
-        }).optional()
     }
 }
 

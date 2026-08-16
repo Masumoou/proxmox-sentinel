@@ -80,8 +80,8 @@ impl<'a> CorrelationEngine<'a> {
                     // We only correlate if the parent incident started BEFORE or AT THE SAME TIME as the child incident
                     // We allow a small 60s buffer for out-of-order evaluation due to intervals.
                     let time_diff = target_incident
-                        .created_at
-                        .signed_duration_since(candidate_parent.created_at);
+                        .started_at
+                        .signed_duration_since(candidate_parent.started_at);
                     if time_diff.num_seconds() > -60 {
                         self.build_and_store_correlation(
                             candidate_parent.id,
@@ -159,10 +159,13 @@ mod tests {
         Incident {
             id: Uuid::new_v4(),
             alert_id: Uuid::new_v4(),
+            vm_id: Uuid::new_v4(),
             state: IncidentState::Open,
-            severity: "critical".into(),
-            created_at: Utc::now() - Duration::minutes(mins_ago),
+            started_at: Utc::now() - Duration::minutes(mins_ago),
+            acknowledged_at: None,
             resolved_at: None,
+            acknowledged_by: None,
+            root_cause_summary: None,
         }
     }
 
@@ -173,7 +176,7 @@ mod tests {
         let child = mock_incident(2); // Fired 2 mins ago
 
         // The engine compares the time diff:
-        let diff = child.created_at.signed_duration_since(parent.created_at);
+        let diff = child.started_at.signed_duration_since(parent.started_at);
         assert!(diff.num_seconds() > 0, "Child happened after parent");
 
         // The engine builds the IncidentCorrelation struct without mutating Incident objects.

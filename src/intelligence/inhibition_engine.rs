@@ -44,10 +44,13 @@ mod tests {
         Incident {
             id: Uuid::new_v4(),
             alert_id: Uuid::new_v4(),
+            vm_id: Uuid::new_v4(),
             state: IncidentState::Open,
-            severity: "critical".into(),
-            created_at: Utc::now(),
+            started_at: Utc::now(),
+            acknowledged_at: None,
             resolved_at: None,
+            acknowledged_by: None,
+            root_cause_summary: None,
         }
     }
 

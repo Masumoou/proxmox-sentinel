@@ -1,6 +1,6 @@
 [package]
 name = "proxmox-sentinel"
-version = "0.2.25"
+version = "0.2.26"
 edition = "2024"
 description = "Lightweight agentless Proxmox monitoring daemon"
 license = "MIT"
@@ -76,6 +76,8 @@ redis = { version = "1.2", features = ["tokio-comp"] }
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
+uuid = { version = "1.24.1", features = ["serde", "v4"] }
+async-trait = "0.1.92"
 
 
 [profile.release]

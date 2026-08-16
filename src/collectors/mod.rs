@@ -1,3 +1,14 @@
+pub mod app_logs;
+pub mod app_metrics;
 pub mod engine;
+pub mod file_activity;
+pub mod haproxy;
+pub mod logs;
+pub mod lxc;
+pub mod object_storage;
+pub mod platform;
+pub mod postgres;
+pub mod redis;
 pub mod service;
 pub mod traits;
+pub mod vm;

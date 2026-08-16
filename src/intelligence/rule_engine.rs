@@ -68,12 +68,13 @@ impl<'a> RuleEngine<'a> {
             std::cmp::max(monitor_interval_secs * 2 + (monitor_interval_secs / 2), 60) as i64;
 
         if let Some(alert) = active_alert {
-            if let Some(resolve_val) = &rule.resolve_value {
-                let resolve_dur = rule.resolve_duration_secs.unwrap_or(0);
+            if !rule.resolve_value.is_empty() {
+                let resolve_dur = rule.resolve_duration_secs as u32;
+                let op = rule.resolve_operator.parse::<Operator>().unwrap_or(Operator::Equal);
                 if self.is_condition_continuous(
                     telemetry,
-                    rule.operator.clone(),
-                    resolve_val,
+                    op,
+                    &rule.resolve_value,
                     resolve_dur,
                     max_gap_secs,
                 ) {
@@ -81,11 +82,13 @@ impl<'a> RuleEngine<'a> {
                 }
             }
         } else {
+            let fire_dur = rule.fire_duration_secs as u32;
+            let op = rule.fire_operator.parse::<Operator>().unwrap_or(Operator::Equal);
             if self.is_condition_continuous(
                 telemetry,
-                rule.operator.clone(),
+                op,
                 &rule.fire_value,
-                rule.fire_duration_secs,
+                fire_dur,
                 max_gap_secs,
             ) {
                 self.fire_new_alert_and_incident(rule)?;
@@ -97,7 +100,7 @@ impl<'a> RuleEngine<'a> {
     fn evaluate_rule(&self, rule: &Rule) -> Result<()> {
         let max_lookback_secs = std::cmp::max(
             rule.fire_duration_secs,
-            rule.resolve_duration_secs.unwrap_or(0),
+            rule.resolve_duration_secs,
         ) as i64;
         let since = Utc::now() - Duration::seconds(max_lookback_secs + 600); // 10 min buffer
 
@@ -203,21 +206,28 @@ impl<'a> RuleEngine<'a> {
     }
 
     fn fire_new_alert_and_incident(&self, rule: &Rule) -> Result<()> {
+        let metric = self.metric_repo.get_by_id(rule.metric_id)?.unwrap();
+        let monitor = self.monitor_repo.get_by_id(metric.monitor_id)?.unwrap();
+        let resource = self.resource_repo.get_by_id(monitor.resource_id)?.unwrap();
+
         let alert_id = Uuid::new_v4();
         let alert = Alert {
             id: alert_id,
             rule_id: rule.id,
             state: AlertState::Firing,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            fired_at: Some(Utc::now()),
+            resolved_at: None,
         };
         let incident = Incident {
             id: Uuid::new_v4(),
             alert_id,
+            vm_id: resource.vm_id,
             state: IncidentState::Open,
-            severity: rule.severity.clone(),
-            created_at: Utc::now(),
+            started_at: Utc::now(),
+            acknowledged_at: None,
             resolved_at: None,
+            acknowledged_by: None,
+            root_cause_summary: None,
         };
         self.alert_repo.insert(&alert)?;
         self.incident_repo.insert(&incident)?;

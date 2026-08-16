@@ -81,7 +81,7 @@ fn test_integration_1_telemetry_gap() {
         rusqlite::params![metric_id.to_string(), monitor_id.to_string()]).unwrap();
 
     let rule_id = Uuid::new_v4();
-    conn.execute("INSERT INTO rules (id, metric_id, state, operator, fire_value, fire_duration_secs, resolve_value, resolve_duration_secs, severity, version, created_at, updated_at) VALUES (?1, ?2, 'ENABLED', 'EQUAL', 'inactive', 120, 'active', 120, 'Critical', 1, ?3, ?4)",
+    conn.execute("INSERT INTO rules (id, metric_id, template_id, state, fire_operator, fire_value_type, fire_value, fire_duration_secs, resolve_operator, resolve_value_type, resolve_value, resolve_duration_secs, severity, version, created_at, updated_at) VALUES (?1, ?2, NULL, 'ENABLED', 'EQUAL', 'string', 'inactive', 120, 'EQUAL', 'string', 'active', 120, 'Critical', 1, ?3, ?4)",
         rusqlite::params![rule_id.to_string(), metric_id.to_string(), Utc::now().to_rfc3339(), Utc::now().to_rfc3339()]).unwrap();
 
     let template_id = Uuid::new_v4();
@@ -185,6 +185,7 @@ fn test_integration_1_telemetry_gap() {
         .process_incident(
             &active_inc,
             Some(rule_id),
+            Some("Critical"),
             Some(vm_id),
             Some(resource_id),
             Some(metric_id),

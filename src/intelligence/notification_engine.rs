@@ -36,6 +36,7 @@ impl<'a> NotificationEngine<'a> {
         &self,
         incident: &Incident,
         rule_id: Option<Uuid>,
+        severity: Option<&str>,
         vm_id: Option<Uuid>,
         resource_id: Option<Uuid>,
         metric_id: Option<Uuid>,
@@ -68,7 +69,7 @@ impl<'a> NotificationEngine<'a> {
         let mut matched = false;
 
         for route in active_routes {
-            if self.route_matches(&route, incident, rule_id, vm_id, resource_id, metric_id) {
+            if self.route_matches(&route, incident, rule_id, severity, vm_id, resource_id, metric_id) {
                 matched = true;
                 self.dispatch_to_channel(incident, &route)?;
             }
@@ -89,6 +90,7 @@ impl<'a> NotificationEngine<'a> {
         route: &NotificationRoute,
         incident: &Incident,
         rule_id: Option<Uuid>,
+        severity: Option<&str>,
         vm_id: Option<Uuid>,
         resource_id: Option<Uuid>,
         metric_id: Option<Uuid>,
@@ -100,7 +102,7 @@ impl<'a> NotificationEngine<'a> {
             }
         }
         if let Some(ref sev) = route.severity {
-            if sev != &incident.severity {
+            if Some(sev.as_str()) != severity {
                 return false;
             }
         }
